@@ -1,0 +1,30 @@
+.program pio_serializer
+.side_set 2
+.origin 0
+
+.wrap_target
+    out pc, 1           side 0b10
+    out pc, 1           side 0b01
+.wrap
+
+% c-sdk {
+static inline void pio_serializer_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
+    // TODO: okay to remove?
+    pio_sm_set_pins_with_mask(pio, sm, 2u << pin_base, 3u << pin_base);
+    pio_sm_set_pindirs_with_mask(pio, sm, ~0u, 3u << pin_base);
+
+    for(uint k = pin_base; k < pin_base + 2; k++) {
+        pio_gpio_init(pio, k);
+        //pio_sm_set_consecutive_pindirs(pio, sm, k, 1, true);
+        gpio_set_slew_rate(k, GPIO_SLEW_RATE_FAST);
+        gpio_set_drive_strength(k, GPIO_DRIVE_STRENGTH_2MA);
+    }
+
+    pio_sm_config c = pio_serializer_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin_base);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_out_shift(&c, true, true, 20);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, false);
+}
+%}

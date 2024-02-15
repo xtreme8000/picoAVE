@@ -1,0 +1,24 @@
+.program pio_clock
+
+    nop
+    nop
+loop:
+    set pins, 0b01      [4]
+    set pins, 0b10      [3]
+    jmp loop
+
+% c-sdk {
+static inline void pio_clock_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
+    for(uint k = pin_base; k < pin_base + 2; k++) {
+        pio_gpio_init(pio, k);
+        pio_sm_set_consecutive_pindirs(pio, sm, k, 1, true);
+        gpio_set_slew_rate(k, GPIO_SLEW_RATE_FAST);
+        gpio_set_drive_strength(k, GPIO_DRIVE_STRENGTH_2MA);
+    }
+
+    pio_sm_config c = pio_clock_program_get_default_config(offset);
+    sm_config_set_set_pins(&c, pin_base, 2);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, false);
+}
+%}

@@ -1,0 +1,33 @@
+.program pio_capture
+
+.wrap_target
+    // exactly 5 (interlaced: 10) cycles for each byte (270MHz / 54MHz)
+    // using csel as a clock
+
+    wait 0 pin 8        // wait for rising edge
+    wait 1 pin 8
+
+    in pins, 8 [4]      // y1
+    in pins, 8 [4]      // cb
+    in pins, 8 [4]      // y2
+    in pins, 8          // cr
+.wrap
+
+% c-sdk {
+static inline void pio_capture_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
+    for(uint k = pin_base; k < pin_base + 9; k++) {
+        gpio_init(k);
+        gpio_set_input_enabled(k, true);
+        gpio_set_dir(k, false);
+        gpio_set_input_hysteresis_enabled(k, true);
+        gpio_disable_pulls(k);
+    }
+
+    pio_sm_config c = pio_capture_program_get_default_config(offset);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_in_shift(&c, false, true, 32);
+    sm_config_set_in_pins(&c, pin_base);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, false);
+}
+%}
