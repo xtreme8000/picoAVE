@@ -21,10 +21,11 @@ uint32_t tmds_image_zero[FRAME_VIS_WIDTH / 2];
 queue_t queue_unused;
 queue_t queue_test;
 
-extern void tmds_encode3_y1y2(const uint32_t* pixbuf, size_t length,
-							  uint32_t* tmds);
-extern void tmds_encode3_cbcr(const uint32_t* pixbuf, size_t length,
-							  uint32_t* tmds);
+static void memset32(uint32_t* dest, const uint32_t x, const size_t start,
+					 const size_t end) {
+	for(size_t k = start; k < end; k++)
+		dest[k] = x;
+}
 
 void thread2(void);
 
@@ -47,8 +48,7 @@ int main() {
 	gpio_init(PICO_DEFAULT_LED_PIN);
 	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
-	for(int x = 0; x < FRAME_VIS_WIDTH / 2; x++)
-		tmds_image_zero[x] = 0xffd00;
+	memset32(tmds_image_zero, 0xffd00, 0, FRAME_VIS_WIDTH / 2);
 
 	queue_init(&queue_unused, sizeof(struct tmds_data3*), 16);
 	queue_init(&queue_test, sizeof(struct tmds_data3*), 16);
@@ -56,16 +56,12 @@ int main() {
 	for(int k = 0; k < queue_unused.element_count; k++) {
 		struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
 		obj->allocated = true;
-		obj->vis_length = 0;
+		obj->encode_offset = 0;
+		obj->encode_length = 0;
 		obj->length = FRAME_VIS_WIDTH / 2;
 		obj->ptr[0] = tmds_image_zero;
 		obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
 		obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
-
-		for(size_t i = 0; i < obj->length; i++) {
-			obj->ptr[1][i] = tmds_symbols_10h[4];
-			obj->ptr[2][i] = tmds_symbols_80h[4];
-		}
 
 		queue_add_blocking(&queue_unused, &obj);
 	}
@@ -76,16 +72,23 @@ int main() {
 	video_output_init((uint[]) {18, 20, 26}, 16, 8, &queue_unused);
 
 	multicore_launch_core1(thread2);
-
-	sleep_ms(1000);
-
 	video_output_start();
 
 	while(1) {
-		struct tmds_data3* pixels;
-		queue_remove_blocking(&queue_test, &pixels);
-		tmds_encode3_cbcr(pixels->ptr[2], pixels->vis_length, pixels->ptr[2]);
-		video_output_submit(pixels);
+		struct tmds_data3* obj;
+		queue_remove_blocking(&queue_test, &obj);
+
+		if(obj->encode_length > 0) {
+			size_t bias = tmds_encode_video(obj->ptr[2] + obj->encode_offset,
+											true, obj->encode_length,
+											obj->ptr[2] + obj->encode_offset);
+
+			if(obj->encode_offset + obj->encode_length < obj->length)
+				obj->ptr[2][obj->encode_offset + obj->encode_length]
+					= tmds_symbols_80h[bias];
+		}
+
+		video_output_submit(obj);
 	}
 
 	return 0;
@@ -129,7 +132,7 @@ bool find_image_start(struct gpu_data** data, size_t* start, size_t* width) {
 	}
 
 	*start = video_start;
-	*width = min_n((video_end - video_start + 2) / 3 * 3, FRAME_VIS_WIDTH / 2);
+	*width = min_n(video_end - video_start, FRAME_VIS_WIDTH / 2);
 	*data = current_data;
 	return true;
 }
@@ -141,7 +144,20 @@ void thread2() {
 	gpu_input_init(32, FRAME_WIDTH / 2 * 2, 2);
 	gpu_input_start();
 
-	for(int k = 0; k < FRAME_HEIGHT / 3 * 60 * 5; k++) {
+	while(!queue_is_full(&queue_unused))
+		tight_loop_contents();
+
+	for(int k = 0; k < queue_unused.element_count; k++) {
+		struct tmds_data3* obj;
+		queue_remove_blocking(&queue_unused, &obj);
+
+		memset32(obj->ptr[1], tmds_symbols_10h[4], 0, obj->length);
+		memset32(obj->ptr[2], tmds_symbols_80h[4], 0, obj->length);
+
+		queue_add_blocking(&queue_unused, &obj);
+	}
+
+	for(int k = 0; k < FRAME_HEIGHT / 3 * 60; k++) {
 		struct gpu_data* in = gpu_input_receive();
 		gpu_input_release(in);
 	}
@@ -149,6 +165,13 @@ void thread2() {
 	size_t current_idx, video_width;
 	struct gpu_data* current_data;
 	find_image_start(&current_data, &current_idx, &video_width);
+
+	static_assert(FRAME_VIS_WIDTH / 2 % 3 == 0);
+	size_t video_width_padded = (video_width + 2) / 3 * 3;
+	size_t video_xstart = (FRAME_VIS_WIDTH / 2 - video_width) / 2;
+
+	if(video_xstart + video_width_padded > FRAME_VIS_WIDTH / 2)
+		video_xstart = 0;
 
 	bool prev_blank = false;
 
@@ -168,19 +191,26 @@ void thread2() {
 		}
 	}
 
+	// TODO: detect actual video height from input
+	size_t video_height = min_n(452, FRAME_VIS_HEIGHT);
+	size_t video_vstart = (FRAME_VIS_HEIGHT - video_height) / 2;
+	size_t video_vend = video_height + video_vstart;
+
 	while(1) {
-		for(int k = 0; k < FRAME_VIS_HEIGHT; k++) {
+		for(size_t k = video_vstart; k < video_vend; k++) {
 			struct tmds_data3* obj;
 			queue_remove_blocking(&queue_unused, &obj);
 			obj->vsync = k == 0;
-			obj->vis_length = video_width;
+			obj->encode_offset = video_xstart;
+			obj->encode_length = video_width_padded;
 
 			size_t line_idx = 0;
 
 			while(line_idx < video_width) {
 				size_t can_take = min_n(video_width - line_idx,
 										current_data->length - current_idx);
-				memcpy(obj->ptr[2] + line_idx, current_data->ptr + current_idx,
+				memcpy(obj->ptr[2] + video_xstart + line_idx,
+					   current_data->ptr + current_idx,
 					   can_take * sizeof(uint32_t));
 
 				line_idx += can_take;
@@ -193,10 +223,42 @@ void thread2() {
 				}
 			}
 
-			tmds_encode3_y1y2(obj->ptr[2], obj->vis_length, obj->ptr[1]);
+			while(line_idx < video_width_padded)
+				obj->ptr[2][video_xstart + line_idx++] = 0x10801080;
+
+			size_t bias = tmds_encode_video(obj->ptr[2] + video_xstart, false,
+											video_width_padded,
+											obj->ptr[1] + video_xstart);
+
+			if(video_xstart + video_width_padded < obj->length)
+				obj->ptr[1][video_xstart + video_width_padded]
+					= tmds_symbols_10h[bias];
+
 			queue_add_blocking(&queue_test, &obj);
 
 			current_idx += FRAME_WIDTH / 2 - video_width;
+
+			while(current_idx >= current_data->length) {
+				current_idx -= current_data->length;
+				gpu_input_release(current_data);
+				current_data = gpu_input_receive();
+			}
+		}
+
+		for(size_t k = video_vend; k < FRAME_VIS_HEIGHT; k++) {
+			struct tmds_data3* obj;
+			queue_remove_blocking(&queue_unused, &obj);
+			obj->vsync = k == 0;
+			obj->encode_length = 0;
+
+			memset32(obj->ptr[1], tmds_symbols_10h[4], video_xstart,
+					 video_xstart + video_width_padded + 1);
+			memset32(obj->ptr[2], tmds_symbols_80h[4], video_xstart,
+					 video_xstart + video_width_padded + 1);
+
+			queue_add_blocking(&queue_test, &obj);
+
+			current_idx += FRAME_WIDTH / 2;
 
 			while(current_idx >= current_data->length) {
 				current_idx -= current_data->length;
@@ -211,6 +273,28 @@ void thread2() {
 			current_idx -= current_data->length;
 			gpu_input_release(current_data);
 			current_data = gpu_input_receive();
+		}
+
+		for(size_t k = 0; k < video_vstart; k++) {
+			struct tmds_data3* obj;
+			queue_remove_blocking(&queue_unused, &obj);
+			obj->vsync = k == 0;
+			obj->encode_length = 0;
+
+			memset32(obj->ptr[1], tmds_symbols_10h[4], video_xstart,
+					 video_xstart + video_width_padded + 1);
+			memset32(obj->ptr[2], tmds_symbols_80h[4], video_xstart,
+					 video_xstart + video_width_padded + 1);
+
+			queue_add_blocking(&queue_test, &obj);
+
+			current_idx += FRAME_WIDTH / 2;
+
+			while(current_idx >= current_data->length) {
+				current_idx -= current_data->length;
+				gpu_input_release(current_data);
+				current_data = gpu_input_receive();
+			}
 		}
 	}
 }

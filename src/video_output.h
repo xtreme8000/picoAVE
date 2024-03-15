@@ -9,7 +9,8 @@
 struct tmds_data3 {
 	bool vsync;
 	bool allocated;
-	size_t vis_length;
+	size_t encode_offset;
+	size_t encode_length;
 	size_t length;
 	uint32_t* ptr[TMDS_CHANNEL_COUNT];
 };

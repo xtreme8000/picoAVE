@@ -205,187 +205,111 @@ void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2) {
 	}
 }
 
-void tmds_encode_y1y2(const uint32_t* pixbuf, size_t length, uint32_t* tmds) {
-	uint32_t bias = 0;
+static uint32_t tmds_encode3_y1y2(const uint32_t* pixbuf, size_t length,
+								  uint32_t bias, uint32_t* tmds) {
+	asm volatile("loop%=:\n\t"
+				 "ldmia      %[pixbuf]!,{%%r4,%%r5,%%r6}\n\t"
 
-	const uint32_t* end = pixbuf + length;
+				 "str        %%r4,[%[interp],#0x00]\n\t" // accum 0
 
-	while(pixbuf != end) {
-		uint32_t ycbcr;
-		asm volatile("ldmia %0!, {%1}" : "+l"(pixbuf), "=l"(ycbcr));
+				 "ldr        %%r4,[%[interp],#0x20]\n\t" // lane0 peek
+				 "ldr        %%r4,[%%r4,%[bias]]\n\t"
+				 "lsr        %[bias],%%r4,#26\n\t"
 
-		interp_set_accumulator(interp0, 0, ycbcr);
+				 "ldr        %%r7,[%[interp],#0x24]\n\t" // lane1 peek
+				 "ldr        %%r7,[%%r7,%[bias]]\n\t"
+				 "lsr        %[bias],%%r7,#18\n\t"
+				 "orr        %%r4,%%r7\n\t"
 
-		// lut index: pixel [9:2] in bits, bias [13:10]
-		// 0xF00003FF
-		uint32_t symbol1;
-		asm volatile("ldr %0, [%1, %2]"
-					 : "=l"(symbol1)
-					 : "l"(interp_peek_lane_result(interp0, 0)), "l"(bias));
-		bias = symbol1 >> 26;
+				 "str        %%r5,[%[interp],#0x00]\n\t"
 
-		// lut index: pixel [13:6] in bits, bias [5:2]
-		// 0xF00FFC00
-		uint32_t symbol2;
-		asm volatile("ldr %0, [%1, %2]"
-					 : "=l"(symbol2)
-					 : "l"(interp_peek_lane_result(interp0, 1)), "l"(bias));
-		bias = symbol2 >> 18;
+				 "ldr        %%r5,[%[interp],#0x20]\n\t"
+				 "ldr        %%r5,[%%r5,%[bias]]\n\t"
+				 "lsr        %[bias],%%r5,#26\n\t"
 
-		asm volatile("stmia %0!, {%1}"
-					 : "+l"(tmds)
-					 : "l"(symbol1 | symbol2)
-					 : "memory");
-	}
-}
+				 "ldr        %%r7,[%[interp],#0x24]\n\t"
+				 "ldr        %%r7,[%%r7,%[bias]]\n\t"
+				 "lsr        %[bias],%%r7,#18\n\t"
+				 "orr        %%r5,%%r7\n\t"
 
-void tmds_encode_cbcr(const uint32_t* pixbuf, size_t length, uint32_t* tmds) {
-	uint32_t bias = 0;
+				 "str        %%r6,[%[interp],#0x00]\n\t"
 
-	const uint32_t* end = pixbuf + length;
+				 "ldr        %%r6,[%[interp],#0x20]\n\t"
+				 "ldr        %%r6,[%%r6,%[bias]]\n\t"
+				 "lsr        %[bias],%%r6,#26\n\t"
 
-	while(pixbuf != end) {
-		uint32_t ycbcr;
-		asm volatile("ldmia %0!, {%1}" : "+l"(pixbuf), "=l"(ycbcr));
+				 "ldr        %%r7,[%[interp],#0x24]\n\t"
+				 "ldr        %%r7,[%%r7,%[bias]]\n\t"
+				 "lsr        %[bias],%%r7,#18\n\t"
+				 "orr        %%r6,%%r7\n\t"
 
-		interp_set_accumulator(interp1, 0, ycbcr << 8);
+				 "stmia      %[tmds]!,{%%r4,%%r5,%%r6}\n\t"
+				 "cmp        %[end],%[pixbuf]\n\t"
+				 "bhi        loop%=\n\t"
+				 : [bias] "+l"(bias), [pixbuf] "+l"(pixbuf), [tmds] "+l"(tmds)
+				 : [interp] "l"((uint32_t)interp0), [end] "h"(pixbuf + length)
+				 : "r4", "r5", "r6", "r7", "cc", "memory");
 
-		// lut index: pixel [9:2] in bits, bias [13:10]
-		// 0xF00003FF
-		uint32_t symbol1;
-		asm volatile("ldr %0, [%1, %2]"
-					 : "=l"(symbol1)
-					 : "l"(interp_peek_lane_result(interp1, 0)), "l"(bias));
-		bias = symbol1 >> 26;
-
-		// lut index: pixel [13:6] in bits, bias [5:2]
-		// 0xF00FFC00
-		uint32_t symbol2;
-		asm volatile("ldr %0, [%1, %2]"
-					 : "=l"(symbol2)
-					 : "l"(interp_peek_lane_result(interp1, 1)), "l"(bias));
-		bias = symbol2 >> 18;
-
-		asm volatile("stmia %0!, {%1}"
-					 : "+l"(tmds)
-					 : "l"(symbol1 | symbol2)
-					 : "memory");
-	}
-}
-
-void tmds_encode3_y1y2(const uint32_t* pixbuf, size_t length, uint32_t* tmds) {
-	uint32_t bias = 0;
-	uint32_t interp = (uint32_t)interp0;
-	const uint32_t* end = pixbuf + length;
-
-	while(pixbuf != end) {
-		asm volatile("ldmia      %[pixbuf]!,{%%r4,%%r5,%%r6}\n\t"
-
-					 "str        %%r4,[%[interp],#0x00]\n\t" // accum 0
-
-					 "ldr        %%r4,[%[interp],#0x20]\n\t" // lane0 peek
-					 "ldr        %%r4,[%%r4,%[bias]]\n\t"
-					 "lsr        %[bias],%%r4,#26\n\t"
-
-					 "ldr        %%r7,[%[interp],#0x24]\n\t" // lane1 peek
-					 "ldr        %%r7,[%%r7,%[bias]]\n\t"
-					 "lsr        %[bias],%%r7,#18\n\t"
-					 "orr        %%r4,%%r7\n\t"
-
-					 "str        %%r5,[%[interp],#0x00]\n\t"
-
-					 "ldr        %%r5,[%[interp],#0x20]\n\t"
-					 "ldr        %%r5,[%%r5,%[bias]]\n\t"
-					 "lsr        %[bias],%%r5,#26\n\t"
-
-					 "ldr        %%r7,[%[interp],#0x24]\n\t"
-					 "ldr        %%r7,[%%r7,%[bias]]\n\t"
-					 "lsr        %[bias],%%r7,#18\n\t"
-					 "orr        %%r5,%%r7\n\t"
-
-					 "str        %%r6,[%[interp],#0x00]\n\t"
-
-					 "ldr        %%r6,[%[interp],#0x20]\n\t"
-					 "ldr        %%r6,[%%r6,%[bias]]\n\t"
-					 "lsr        %[bias],%%r6,#26\n\t"
-
-					 "ldr        %%r7,[%[interp],#0x24]\n\t"
-					 "ldr        %%r7,[%%r7,%[bias]]\n\t"
-					 "lsr        %[bias],%%r7,#18\n\t"
-					 "orr        %%r6,%%r7\n\t"
-
-					 "stmia      %[tmds]!,{%%r4,%%r5,%%r6}\n\t"
-					 : [bias] "+l"(bias), [pixbuf] "+l"(pixbuf),
-					   [tmds] "+l"(tmds), [interp] "+l"(interp)
-					 :
-					 : "r4", "r5", "r6", "r7", "memory");
-	}
+	return bias;
 }
 
 // slower than y1y2
-void tmds_encode3_cbcr(const uint32_t* pixbuf, size_t length, uint32_t* tmds) {
-	uint32_t bias = 0;
-	uint32_t interp = (uint32_t)interp1;
-	const uint32_t* end = pixbuf + length;
+static uint32_t tmds_encode3_cbcr(const uint32_t* pixbuf, size_t length,
+								  uint32_t bias, uint32_t* tmds) {
+	asm volatile("loop%=:\n\t"
+				 "ldmia      %[pixbuf]!,{%%r4,%%r5,%%r6}\n\t"
 
-	while(pixbuf != end) {
-		asm volatile("ldmia      %[pixbuf]!,{%%r4,%%r5,%%r6}\n\t"
+				 "lsl        %%r4, #8\n\t"
+				 "str        %%r4,[%[interp],#0x00]\n\t" // accum 0
 
-					 "lsl        %%r4, #8\n\t"
-					 "str        %%r4,[%[interp],#0x00]\n\t" // accum 0
+				 "ldr        %%r4,[%[interp],#0x20]\n\t" // lane0 peek
+				 "ldr        %%r4,[%%r4,%[bias]]\n\t"
+				 "lsr        %[bias],%%r4,#26\n\t"
 
-					 "ldr        %%r4,[%[interp],#0x20]\n\t" // lane0 peek
-					 "ldr        %%r4,[%%r4,%[bias]]\n\t"
-					 "lsr        %[bias],%%r4,#26\n\t"
+				 "ldr        %%r7,[%[interp],#0x24]\n\t" // lane1 peek
+				 "ldr        %%r7,[%%r7,%[bias]]\n\t"
+				 "lsr        %[bias],%%r7,#18\n\t"
+				 "orr        %%r4,%%r7\n\t"
 
-					 "ldr        %%r7,[%[interp],#0x24]\n\t" // lane1 peek
-					 "ldr        %%r7,[%%r7,%[bias]]\n\t"
-					 "lsr        %[bias],%%r7,#18\n\t"
-					 "orr        %%r4,%%r7\n\t"
+				 "lsl        %%r5, #8\n\t"
+				 "str        %%r5,[%[interp],#0x00]\n\t"
 
-					 "lsl        %%r5, #8\n\t"
-					 "str        %%r5,[%[interp],#0x00]\n\t"
+				 "ldr        %%r5,[%[interp],#0x20]\n\t"
+				 "ldr        %%r5,[%%r5,%[bias]]\n\t"
+				 "lsr        %[bias],%%r5,#26\n\t"
 
-					 "ldr        %%r5,[%[interp],#0x20]\n\t"
-					 "ldr        %%r5,[%%r5,%[bias]]\n\t"
-					 "lsr        %[bias],%%r5,#26\n\t"
+				 "ldr        %%r7,[%[interp],#0x24]\n\t"
+				 "ldr        %%r7,[%%r7,%[bias]]\n\t"
+				 "lsr        %[bias],%%r7,#18\n\t"
+				 "orr        %%r5,%%r7\n\t"
 
-					 "ldr        %%r7,[%[interp],#0x24]\n\t"
-					 "ldr        %%r7,[%%r7,%[bias]]\n\t"
-					 "lsr        %[bias],%%r7,#18\n\t"
-					 "orr        %%r5,%%r7\n\t"
+				 "lsl        %%r6, #8\n\t"
+				 "str        %%r6,[%[interp],#0x00]\n\t"
 
-					 "lsl        %%r6, #8\n\t"
-					 "str        %%r6,[%[interp],#0x00]\n\t"
+				 "ldr        %%r6,[%[interp],#0x20]\n\t"
+				 "ldr        %%r6,[%%r6,%[bias]]\n\t"
+				 "lsr        %[bias],%%r6,#26\n\t"
 
-					 "ldr        %%r6,[%[interp],#0x20]\n\t"
-					 "ldr        %%r6,[%%r6,%[bias]]\n\t"
-					 "lsr        %[bias],%%r6,#26\n\t"
+				 "ldr        %%r7,[%[interp],#0x24]\n\t"
+				 "ldr        %%r7,[%%r7,%[bias]]\n\t"
+				 "lsr        %[bias],%%r7,#18\n\t"
+				 "orr        %%r6,%%r7\n\t"
 
-					 "ldr        %%r7,[%[interp],#0x24]\n\t"
-					 "ldr        %%r7,[%%r7,%[bias]]\n\t"
-					 "lsr        %[bias],%%r7,#18\n\t"
-					 "orr        %%r6,%%r7\n\t"
+				 "stmia      %[tmds]!,{%%r4,%%r5,%%r6}\n\t"
+				 "cmp        %[end],%[pixbuf]\n\t"
+				 "bhi        loop%=\n\t"
+				 : [bias] "+l"(bias), [pixbuf] "+l"(pixbuf), [tmds] "+l"(tmds)
+				 : [interp] "l"((uint32_t)interp1), [end] "h"(pixbuf + length)
+				 : "r4", "r5", "r6", "r7", "cc", "memory");
 
-					 "stmia      %[tmds]!,{%%r4,%%r5,%%r6}\n\t"
-					 : [bias] "+l"(bias), [pixbuf] "+l"(pixbuf),
-					   [tmds] "+l"(tmds), [interp] "+l"(interp)
-					 :
-					 : "r4", "r5", "r6", "r7", "memory");
-	}
+	return bias;
 }
 
-void tmds_encode_video(const uint32_t* pixbuf, bool cbcr, size_t length,
-					   uint32_t* tmds) {
-	size_t unrolled = length / 3 * 3;
-
-	// TODO: keep bias between calls
-
+size_t tmds_encode_video(const uint32_t* pixbuf, bool cbcr, size_t length,
+						 uint32_t* tmds) {
 	if(cbcr) {
-		tmds_encode3_cbcr(pixbuf, unrolled, tmds);
-		tmds_encode_cbcr(pixbuf + unrolled, length - unrolled, tmds + unrolled);
+		return tmds_encode3_cbcr(pixbuf, length, 0, tmds) >> 10;
 	} else {
-		tmds_encode3_y1y2(pixbuf, unrolled, tmds);
-		tmds_encode_y1y2(pixbuf + unrolled, length - unrolled, tmds + unrolled);
+		return tmds_encode3_y1y2(pixbuf, length, 0, tmds) >> 10;
 	}
 }
