@@ -40,6 +40,15 @@ static uint8_t bch_calc(uint8_t* data, size_t length) {
 	return state;
 }
 
+static size_t parity_calc(uint8_t* data, size_t length) {
+	size_t parity = 0;
+
+	for(size_t k = 0; k < length; k++)
+		parity ^= data[k];
+
+	return parity_lookup[parity];
+}
+
 void packets_init() {
 	for(size_t k = 0; k < 256; k++) {
 		bch_lookup[k] = bch_gen(k);
