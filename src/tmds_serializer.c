@@ -1,11 +1,11 @@
 #include <assert.h>
 #include <string.h>
 
-#include "branch_hint.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "pico/platform.h"
 #include "pico/stdlib.h"
+#include "utils.h"
 
 #include "serializer.pio.h"
 #include "tmds_serializer.h"
@@ -27,8 +27,7 @@ static void dma_tmds_configure(uint channel, uint other_channel, uint sm) {
 	dma_channel_set_irq0_enabled(channel, true);
 }
 
-bool __scratch_x("dma0")
-	tmds_serializer_transfer_callback(struct tmds_serializer* s) {
+bool CORE0_CODE tmds_serializer_transfer_callback(struct tmds_serializer* s) {
 	for(size_t k = 0; k < 2; k++) {
 		if(dma_channel_get_irq0_status(s->dma_channels[k])) {
 			dma_channel_acknowledge_irq0(s->dma_channels[k]);

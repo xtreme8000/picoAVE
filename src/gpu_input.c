@@ -6,9 +6,9 @@
 #include "pico/platform.h"
 #include "pico/stdlib.h"
 
-#include "branch_hint.h"
-#include "gpu_input.h"
 #include "capture.pio.h"
+#include "gpu_input.h"
+#include "utils.h"
 
 FIFO_DEF(fifo_gpu, struct gpu_data*)
 
@@ -25,9 +25,9 @@ struct gpu_input {
 	uint pio_program_offset;
 };
 
-static struct gpu_input __scratch_x("dma1_data") gi;
+static struct gpu_input CORE1_DATA gi;
 
-static void __scratch_y("dma1") dma_isr1(void) {
+static void CORE1_CODE dma_isr1(void) {
 	for(size_t k = 0; k < 2; k++) {
 		if(dma_channel_get_irq1_status(gi.dma_channels[k])) {
 			dma_channel_acknowledge_irq1(gi.dma_channels[k]);

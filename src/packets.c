@@ -6,8 +6,7 @@
 
 #include "packets.h"
 #include "tmds_encode.h"
-
-#define READ_BIT(x, i) (((x) & (1 << (i))) ? 1 : 0)
+#include "utils.h"
 
 static uint8_t bch_lookup[256];
 static uint32_t header_lookup[256];

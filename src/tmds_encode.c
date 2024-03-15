@@ -3,8 +3,7 @@
 #include "frame.h"
 #include "hardware/interp.h"
 #include "tmds_encode.h"
-
-#define READ_BIT(x, i) (((x) & (1 << (i))) ? 1 : 0)
+#include "utils.h"
 
 uint32_t tmds_symbol0[256 * 9];
 uint32_t tmds_symbol1[256 * 16];

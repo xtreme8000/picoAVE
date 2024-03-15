@@ -9,11 +9,11 @@
 #include "pico/stdlib.h"
 #include "pico/util/queue.h"
 
-#include "branch_hint.h"
 #include "frame.h"
 #include "gpu_input.h"
 #include "packets.h"
 #include "tmds_encode.h"
+#include "utils.h"
 #include "video_output.h"
 
 uint32_t tmds_image_zero[FRAME_VIS_WIDTH / 2];

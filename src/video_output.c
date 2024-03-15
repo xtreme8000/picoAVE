@@ -5,6 +5,7 @@
 #include "tmds_clock.h"
 #include "tmds_encode.h"
 #include "tmds_serializer.h"
+#include "utils.h"
 
 FIFO_DEF(fifo_image, struct tmds_data3*)
 
@@ -36,8 +37,8 @@ uint32_t tmds_image_porch0[FRAME_H_BLANK / 2];
 uint32_t tmds_image_porch1[FRAME_H_BLANK / 2];
 uint32_t tmds_image_porch2[FRAME_H_BLANK / 2];
 
-static struct video_output __scratch_x("dma0_data") vdo;
-static struct tmds_data3 __scratch_x("dma0_data") video_signal_parts[] = {
+static struct video_output CORE0_DATA vdo;
+static struct tmds_data3 CORE0_DATA video_signal_parts[] = {
 	{
 		.allocated = false,
 		.ptr = {tmds_vsync_porch0, tmds_vsync_porch1, tmds_vsync_porch2},
@@ -79,7 +80,7 @@ static void build_sync_tables(void) {
 				   tmds_vsync_data2 + FRAME_H_BLANK);
 }
 
-static struct tmds_data3* __scratch_x("dma0") build_video_signal(void) {
+static struct tmds_data3* CORE0_CODE build_video_signal(void) {
 	struct tmds_data3* result = NULL;
 
 	if(vdo.state.y < FRAME_V_PORCH_FRONT) {
@@ -113,7 +114,7 @@ static struct tmds_data3* __scratch_x("dma0") build_video_signal(void) {
 	return result;
 }
 
-static void __scratch_x("dma0") refill_channels(void) {
+static void CORE0_CODE refill_channels(void) {
 	while(1) {
 		for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++) {
 			if(ffifo_full(&vdo.channels[k].queue_send))
@@ -135,7 +136,7 @@ static void __scratch_x("dma0") refill_channels(void) {
 	}
 }
 
-static void __scratch_x("dma0") release_sent_entries(void) {
+static void CORE0_CODE release_sent_entries(void) {
 	while(1) {
 		bool transfer_complete = true;
 
@@ -160,7 +161,7 @@ static void __scratch_x("dma0") release_sent_entries(void) {
 	}
 }
 
-static void __scratch_x("dma0") dma_isr0(void) {
+static void CORE0_CODE dma_isr0(void) {
 	for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++)
 		tmds_serializer_transfer_callback(vdo.channels + k);
 
