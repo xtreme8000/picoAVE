@@ -16,16 +16,12 @@
 #include "utils.h"
 #include "video_output.h"
 
-uint32_t tmds_image_zero[FRAME_VIS_WIDTH / 2];
+uint32_t tmds_image_00h[FRAME_VIS_WIDTH / 2];
+uint32_t tmds_image_10h[FRAME_VIS_WIDTH / 2];
+uint32_t tmds_image_80h[FRAME_VIS_WIDTH / 2];
 
 queue_t queue_unused;
 queue_t queue_test;
-
-static void memset32(uint32_t* dest, const uint32_t x, const size_t start,
-					 const size_t end) {
-	for(size_t k = start; k < end; k++)
-		dest[k] = x;
-}
 
 void thread2(void);
 
@@ -48,7 +44,11 @@ int main() {
 	gpio_init(PICO_DEFAULT_LED_PIN);
 	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
-	memset32(tmds_image_zero, 0xffd00, 0, FRAME_VIS_WIDTH / 2);
+	for(size_t k = 0; k < FRAME_VIS_WIDTH / 2; k++) {
+		tmds_image_00h[k] = 0xffd00;
+		tmds_image_10h[k] = tmds_symbols_10h[4];
+		tmds_image_80h[k] = tmds_symbols_80h[4];
+	}
 
 	queue_init(&queue_unused, sizeof(struct tmds_data3*), 16);
 	queue_init(&queue_test, sizeof(struct tmds_data3*), 16);
@@ -59,7 +59,7 @@ int main() {
 		obj->encode_offset = 0;
 		obj->encode_length = 0;
 		obj->length = FRAME_VIS_WIDTH / 2;
-		obj->ptr[0] = tmds_image_zero;
+		obj->ptr[0] = tmds_image_00h;
 		obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
 		obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
 
@@ -96,6 +96,16 @@ int main() {
 
 size_t min_n(size_t a, size_t b) {
 	return a < b ? a : b;
+}
+
+void advance_input(size_t* idx, struct gpu_data** data, size_t amount) {
+	*idx += amount;
+
+	while(*idx >= (*data)->length) {
+		*idx -= (*data)->length;
+		gpu_input_release(*data);
+		*data = gpu_input_receive();
+	}
 }
 
 bool find_image_start(struct gpu_data** data, size_t* start, size_t* width) {
@@ -137,7 +147,20 @@ bool find_image_start(struct gpu_data** data, size_t* start, size_t* width) {
 	return true;
 }
 
+struct tmds_data3 empty_line;
+struct tmds_data3 empty_line_sync;
+
 void thread2() {
+	empty_line = empty_line_sync = (struct tmds_data3) {
+		.allocated = false,
+		.encode_length = 0,
+		.length = FRAME_VIS_WIDTH / 2,
+		.ptr = {tmds_image_00h, tmds_image_10h, tmds_image_80h},
+	};
+
+	empty_line.vsync = false;
+	empty_line_sync.vsync = true;
+
 	tmds_encode_setup();
 
 	// TODO: only 32 because of an overflow during following hsync scan
@@ -151,8 +174,8 @@ void thread2() {
 		struct tmds_data3* obj;
 		queue_remove_blocking(&queue_unused, &obj);
 
-		memset32(obj->ptr[1], tmds_symbols_10h[4], 0, obj->length);
-		memset32(obj->ptr[2], tmds_symbols_80h[4], 0, obj->length);
+		memcpy(obj->ptr[1], tmds_image_10h, sizeof(tmds_image_10h));
+		memcpy(obj->ptr[2], tmds_image_80h, sizeof(tmds_image_80h));
 
 		queue_add_blocking(&queue_unused, &obj);
 	}
@@ -182,17 +205,25 @@ void thread2() {
 			break;
 
 		prev_blank = blanking;
-		current_idx += FRAME_WIDTH / 2;
-
-		while(current_idx >= current_data->length) {
-			current_idx -= current_data->length;
-			gpu_input_release(current_data);
-			current_data = gpu_input_receive();
-		}
+		advance_input(&current_idx, &current_data, FRAME_WIDTH / 2);
 	}
 
-	// TODO: detect actual video height from input
-	size_t video_height = min_n(452, FRAME_VIS_HEIGHT);
+	size_t video_height = 0;
+
+	while(1) {
+		bool blanking = (current_data->ptr[current_idx] & 0xFF00FF00) == 0;
+
+		if(blanking)
+			break;
+
+		advance_input(&current_idx, &current_data, FRAME_WIDTH / 2);
+		video_height++;
+	}
+
+	advance_input(&current_idx, &current_data,
+				  (FRAME_HEIGHT - video_height) * FRAME_WIDTH / 2);
+
+	video_height = min_n(video_height, FRAME_VIS_HEIGHT);
 	size_t video_vstart = (FRAME_VIS_HEIGHT - video_height) / 2;
 	size_t video_vend = video_height + video_vstart;
 
@@ -214,13 +245,7 @@ void thread2() {
 					   can_take * sizeof(uint32_t));
 
 				line_idx += can_take;
-				current_idx += can_take;
-
-				while(current_idx >= current_data->length) {
-					current_idx -= current_data->length;
-					gpu_input_release(current_data);
-					current_data = gpu_input_receive();
-				}
+				advance_input(&current_idx, &current_data, can_take);
 			}
 
 			while(line_idx < video_width_padded)
@@ -235,66 +260,23 @@ void thread2() {
 					= tmds_symbols_10h[bias];
 
 			queue_add_blocking(&queue_test, &obj);
-
-			current_idx += FRAME_WIDTH / 2 - video_width;
-
-			while(current_idx >= current_data->length) {
-				current_idx -= current_data->length;
-				gpu_input_release(current_data);
-				current_data = gpu_input_receive();
-			}
+			advance_input(&current_idx, &current_data,
+						  FRAME_WIDTH / 2 - video_width);
 		}
 
 		for(size_t k = video_vend; k < FRAME_VIS_HEIGHT; k++) {
-			struct tmds_data3* obj;
-			queue_remove_blocking(&queue_unused, &obj);
-			obj->vsync = k == 0;
-			obj->encode_length = 0;
-
-			memset32(obj->ptr[1], tmds_symbols_10h[4], video_xstart,
-					 video_xstart + video_width_padded + 1);
-			memset32(obj->ptr[2], tmds_symbols_80h[4], video_xstart,
-					 video_xstart + video_width_padded + 1);
-
+			struct tmds_data3* obj = (k == 0) ? &empty_line_sync : &empty_line;
 			queue_add_blocking(&queue_test, &obj);
-
-			current_idx += FRAME_WIDTH / 2;
-
-			while(current_idx >= current_data->length) {
-				current_idx -= current_data->length;
-				gpu_input_release(current_data);
-				current_data = gpu_input_receive();
-			}
+			advance_input(&current_idx, &current_data, FRAME_WIDTH / 2);
 		}
 
-		current_idx += FRAME_V_BLANK * FRAME_WIDTH / 2;
-
-		while(current_idx >= current_data->length) {
-			current_idx -= current_data->length;
-			gpu_input_release(current_data);
-			current_data = gpu_input_receive();
-		}
+		advance_input(&current_idx, &current_data,
+					  FRAME_V_BLANK * FRAME_WIDTH / 2);
 
 		for(size_t k = 0; k < video_vstart; k++) {
-			struct tmds_data3* obj;
-			queue_remove_blocking(&queue_unused, &obj);
-			obj->vsync = k == 0;
-			obj->encode_length = 0;
-
-			memset32(obj->ptr[1], tmds_symbols_10h[4], video_xstart,
-					 video_xstart + video_width_padded + 1);
-			memset32(obj->ptr[2], tmds_symbols_80h[4], video_xstart,
-					 video_xstart + video_width_padded + 1);
-
+			struct tmds_data3* obj = (k == 0) ? &empty_line_sync : &empty_line;
 			queue_add_blocking(&queue_test, &obj);
-
-			current_idx += FRAME_WIDTH / 2;
-
-			while(current_idx >= current_data->length) {
-				current_idx -= current_data->length;
-				gpu_input_release(current_data);
-				current_data = gpu_input_receive();
-			}
+			advance_input(&current_idx, &current_data, FRAME_WIDTH / 2);
 		}
 	}
 }
