@@ -71,7 +71,7 @@ static void build_sync_tables(void) {
 
 	struct packet packets[2];
 	packet_avi_info(packets + 0);
-	packet_spd_info(packets + 1, "xtreme8k", "pico AVE");
+	packet_spd_info(packets + 1, "picoAVE", "picoAVE");
 
 	tmds_encode_sync(true, tmds_vsync_data0, tmds_vsync_data1,
 					 tmds_vsync_data2);
