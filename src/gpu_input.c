@@ -5,10 +5,14 @@
 #include "hardware/pio.h"
 #include "pico/platform.h"
 #include "pico/stdlib.h"
+#include "pico/util/queue.h"
 
 #include "capture.pio.h"
+#include "frame.h"
 #include "gpu_input.h"
+#include "i2s.pio.h"
 #include "utils.h"
+#include "video_output.h"
 
 FIFO_DEF(fifo_gpu, struct gpu_data*)
 
@@ -16,38 +20,80 @@ FIFO_DEF(fifo_gpu, struct gpu_data*)
 static uint32_t dummy_buffer[DUMMY_BUFFER_LENGTH];
 
 struct gpu_input {
-	size_t data_skipped;
-	uint dma_channels[2];
-	struct gpu_data* dma_data[2];
-	struct fifo_gpu queue_unused;
-	struct fifo_gpu queue_receive;
-	uint pio_sm;
-	uint pio_program_offset;
+	struct {
+		size_t data_skipped;
+		uint dma_channels[2];
+		struct gpu_data* dma_data[2];
+		struct fifo_gpu queue_unused;
+		struct fifo_gpu queue_receive;
+		uint pio_sm;
+		uint pio_program_offset;
+	} video;
+	struct {
+		uint dma_channels[2];
+		struct tmds_data3* dma_data[2];
+		queue_t* queue_unused;
+		queue_t* queue_receive;
+		uint pio_sm;
+		uint pio_program_offset;
+	} audio;
 };
 
 static struct gpu_input CORE1_DATA gi;
 
 static void CORE1_CODE dma_isr1(void) {
+	// video
+
 	for(size_t k = 0; k < 2; k++) {
-		if(dma_channel_get_irq1_status(gi.dma_channels[k])) {
-			dma_channel_acknowledge_irq1(gi.dma_channels[k]);
+		if(dma_channel_get_irq1_status(gi.video.dma_channels[k])) {
+			dma_channel_acknowledge_irq1(gi.video.dma_channels[k]);
 
-			if(likely(gi.dma_data[k]))
-				fifo_gpu_push(&gi.queue_receive, gi.dma_data + k);
+			if(likely(gi.video.dma_data[k]))
+				fifo_gpu_push(&gi.video.queue_receive, gi.video.dma_data + k);
 
-			if(likely(fifo_gpu_pop(&gi.queue_unused, gi.dma_data + k))) {
-				gi.dma_data[k]->data_skipped = gi.data_skipped;
-				gi.data_skipped = 0;
-				dma_channel_set_write_addr(gi.dma_channels[k],
-										   gi.dma_data[k]->ptr, false);
-				dma_channel_set_trans_count(gi.dma_channels[k],
-											gi.dma_data[k]->length, false);
+			if(likely(fifo_gpu_pop(&gi.video.queue_unused,
+								   gi.video.dma_data + k))) {
+				gi.video.dma_data[k]->data_skipped = gi.video.data_skipped;
+				gi.video.data_skipped = 0;
+				dma_channel_set_write_addr(gi.video.dma_channels[k],
+										   gi.video.dma_data[k]->ptr, false);
+				dma_channel_set_trans_count(gi.video.dma_channels[k],
+											gi.video.dma_data[k]->length,
+											false);
 			} else {
-				gi.dma_data[k] = NULL;
-				gi.data_skipped += DUMMY_BUFFER_LENGTH;
-				dma_channel_set_write_addr(gi.dma_channels[k], dummy_buffer,
+				gi.video.dma_data[k] = NULL;
+				gi.video.data_skipped += DUMMY_BUFFER_LENGTH;
+				dma_channel_set_write_addr(gi.video.dma_channels[k],
+										   dummy_buffer, false);
+				dma_channel_set_trans_count(gi.video.dma_channels[k],
+											DUMMY_BUFFER_LENGTH, false);
+			}
+		}
+	}
+
+	// audio
+
+	for(size_t k = 0; k < 2; k++) {
+		if(dma_channel_get_irq1_status(gi.audio.dma_channels[k])) {
+			dma_channel_acknowledge_irq1(gi.audio.dma_channels[k]);
+
+			if(likely(gi.audio.dma_data[k]))
+				queue_add_blocking(gi.audio.queue_receive,
+								   gi.audio.dma_data + k);
+
+			if(likely(queue_try_remove(gi.audio.queue_unused,
+									   gi.audio.dma_data + k))) {
+				dma_channel_set_write_addr(gi.audio.dma_channels[k],
+										   gi.audio.dma_data[k]->audio_data,
 										   false);
-				dma_channel_set_trans_count(gi.dma_channels[k],
+				dma_channel_set_trans_count(gi.audio.dma_channels[k],
+											gi.audio.dma_data[k]->audio_length,
+											false);
+			} else {
+				gi.audio.dma_data[k] = NULL;
+				dma_channel_set_write_addr(gi.audio.dma_channels[k],
+										   dummy_buffer, false);
+				dma_channel_set_trans_count(gi.audio.dma_channels[k],
 											DUMMY_BUFFER_LENGTH, false);
 			}
 		}
@@ -55,7 +101,7 @@ static void CORE1_CODE dma_isr1(void) {
 }
 
 static void dma_gpu_configure(uint channel, uint other_channel, uint sm,
-							  struct gpu_data* data) {
+							  void* ptr, size_t length) {
 	assert(channel != other_channel);
 
 	dma_channel_config c = dma_channel_get_default_config(channel);
@@ -64,39 +110,67 @@ static void dma_gpu_configure(uint channel, uint other_channel, uint sm,
 	channel_config_set_dreq(&c, pio_get_dreq(pio1, sm, false));
 	channel_config_set_read_increment(&c, false);
 	channel_config_set_write_increment(&c, true);
-	dma_channel_configure(channel, &c, data->ptr, &pio1->rxf[sm], data->length,
-						  false);
+	dma_channel_configure(channel, &c, ptr, &pio1->rxf[sm], length, false);
 	dma_channel_set_irq1_enabled(channel, true);
 }
 
-void gpu_input_init(size_t capacity, size_t buffer_length, uint gpio_base) {
+void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
+					queue_t* unused_queue_audio, queue_t* receive_queue_audio,
+					uint audio_base, uint audio_ws) {
 	assert(capacity > 2 && buffer_length > 0);
 
-	gi.data_skipped = 0;
+	// video
 
-	fifo_gpu_init(&gi.queue_unused, capacity);
-	fifo_gpu_init(&gi.queue_receive, capacity);
+	gi.video.data_skipped = 0;
 
-	while(!fifo_gpu_full(&gi.queue_unused)) {
+	fifo_gpu_init(&gi.video.queue_unused, capacity);
+	fifo_gpu_init(&gi.video.queue_receive, capacity);
+
+	while(!fifo_gpu_full(&gi.video.queue_unused)) {
 		struct gpu_data* obj = malloc(sizeof(struct gpu_data));
 		obj->length = buffer_length;
 		obj->ptr = malloc(buffer_length * sizeof(uint32_t));
-		fifo_gpu_push(&gi.queue_unused, &obj);
+		fifo_gpu_push(&gi.video.queue_unused, &obj);
 	}
 
-	gi.pio_sm = pio_claim_unused_sm(pio1, true);
-	gi.pio_program_offset = pio_add_program(pio1, &pio_capture_program);
-	pio_capture_program_init(pio1, gi.pio_sm, gi.pio_program_offset, gpio_base);
+	gi.video.pio_sm = pio_claim_unused_sm(pio1, true);
+	gi.video.pio_program_offset = pio_add_program(pio1, &pio_capture_program);
+	pio_capture_program_init(pio1, gi.video.pio_sm, gi.video.pio_program_offset,
+							 video_base);
 
 	for(size_t k = 0; k < 2; k++) {
-		gi.dma_channels[k] = dma_claim_unused_channel(true);
-		fifo_gpu_pop(&gi.queue_unused, gi.dma_data + k);
+		gi.video.dma_channels[k] = dma_claim_unused_channel(true);
+		fifo_gpu_pop(&gi.video.queue_unused, gi.video.dma_data + k);
 	}
 
-	dma_gpu_configure(gi.dma_channels[0], gi.dma_channels[1], gi.pio_sm,
-					  gi.dma_data[0]);
-	dma_gpu_configure(gi.dma_channels[1], gi.dma_channels[0], gi.pio_sm,
-					  gi.dma_data[1]);
+	dma_gpu_configure(gi.video.dma_channels[0], gi.video.dma_channels[1],
+					  gi.video.pio_sm, gi.video.dma_data[0]->ptr,
+					  gi.video.dma_data[0]->length);
+	dma_gpu_configure(gi.video.dma_channels[1], gi.video.dma_channels[0],
+					  gi.video.pio_sm, gi.video.dma_data[1]->ptr,
+					  gi.video.dma_data[1]->length);
+
+	// audio
+
+	gi.audio.queue_unused = unused_queue_audio;
+	gi.audio.queue_receive = receive_queue_audio;
+
+	gi.audio.pio_sm = pio_claim_unused_sm(pio1, true);
+	gi.audio.pio_program_offset = pio_add_program(pio1, &pio_i2s_program);
+	pio_i2s_program_init(pio1, gi.audio.pio_sm, gi.audio.pio_program_offset,
+						 audio_base, audio_ws);
+
+	for(size_t k = 0; k < 2; k++) {
+		gi.audio.dma_channels[k] = dma_claim_unused_channel(true);
+		queue_remove_blocking(gi.audio.queue_unused, gi.audio.dma_data + k);
+	}
+
+	dma_gpu_configure(gi.audio.dma_channels[0], gi.audio.dma_channels[1],
+					  gi.audio.pio_sm, gi.audio.dma_data[0]->audio_data,
+					  gi.audio.dma_data[0]->audio_length);
+	dma_gpu_configure(gi.audio.dma_channels[1], gi.audio.dma_channels[0],
+					  gi.audio.pio_sm, gi.audio.dma_data[1]->audio_data,
+					  gi.audio.dma_data[1]->audio_length);
 
 	irq_set_exclusive_handler(DMA_IRQ_1, dma_isr1);
 	irq_set_priority(DMA_IRQ_1, 0);
@@ -104,22 +178,37 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint gpio_base) {
 }
 
 void gpu_input_start() {
-	pio_sm_set_enabled(pio1, gi.pio_sm, false);
+	// video
 
-	pio_sm_clear_fifos(pio1, gi.pio_sm);
-	pio_sm_restart(pio1, gi.pio_sm);
-	pio_sm_exec(pio1, gi.pio_sm, pio_encode_jmp(gi.pio_program_offset));
+	pio_sm_set_enabled(pio1, gi.video.pio_sm, false);
 
-	dma_channel_start(gi.dma_channels[0]);
-	pio_sm_set_enabled(pio1, gi.pio_sm, true);
+	pio_sm_clear_fifos(pio1, gi.video.pio_sm);
+	pio_sm_restart(pio1, gi.video.pio_sm);
+	pio_sm_exec(pio1, gi.video.pio_sm,
+				pio_encode_jmp(gi.video.pio_program_offset));
+
+	dma_channel_start(gi.video.dma_channels[0]);
+	pio_sm_set_enabled(pio1, gi.video.pio_sm, true);
+
+	// audio
+
+	pio_sm_set_enabled(pio1, gi.audio.pio_sm, false);
+
+	pio_sm_clear_fifos(pio1, gi.audio.pio_sm);
+	pio_sm_restart(pio1, gi.audio.pio_sm);
+	pio_sm_exec(pio1, gi.audio.pio_sm,
+				pio_encode_jmp(gi.audio.pio_program_offset));
+
+	dma_channel_start(gi.audio.dma_channels[0]);
+	pio_sm_set_enabled(pio1, gi.audio.pio_sm, true);
 }
 
 struct gpu_data* gpu_input_receive() {
 	struct gpu_data* d;
-	fifo_gpu_pop_blocking(&gi.queue_receive, &d);
+	fifo_gpu_pop_blocking(&gi.video.queue_receive, &d);
 	return d;
 }
 
 void gpu_input_release(struct gpu_data* d) {
-	fifo_gpu_push_blocking(&gi.queue_unused, &d);
+	fifo_gpu_push_blocking(&gi.video.queue_unused, &d);
 }

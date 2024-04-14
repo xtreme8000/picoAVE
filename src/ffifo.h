@@ -9,12 +9,12 @@
 #include <string.h>
 
 #include "pico/sync.h"
+#include "utils.h"
 
 #ifndef CUSTOM_FUNC
 #define CUSTOM_FUNC(a, ...) a##__VA_ARGS__
 #endif
 
-// length must be a power of two
 #define FIFO_DEF(name, type)                                                   \
 	struct name {                                                              \
 		size_t read, write;                                                    \
@@ -23,8 +23,10 @@
 	};                                                                         \
                                                                                \
 	static inline void CUSTOM_FUNC(name, _init)(struct name * f,               \
-												size_t length) {               \
+												size_t min_length) {           \
 		assert(f);                                                             \
+		static_assert(sizeof(min_length) == sizeof(uint32_t));                 \
+		uint32_t length = next_pow2(min_length);                               \
 		f->read = f->write = 0;                                                \
 		f->mask = length - 1;                                                  \
 		f->data = malloc(sizeof(type) * length);                               \

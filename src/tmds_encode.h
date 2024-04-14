@@ -23,8 +23,8 @@ void tmds_encode_setup(void);
 size_t tmds_encode_video(const uint32_t* pixbuf, bool cbcr, size_t length,
 						 uint32_t* tmds);
 uint32_t tmds_sync_lookup(bool vsync, bool hsync);
-void tmds_encode_sync(bool vsync, uint32_t* tmds0, uint32_t* tmds1,
-					  uint32_t* tmds2);
+void tmds_encode_sync(size_t length, bool vsync, uint32_t* tmds0,
+					  uint32_t* tmds1, uint32_t* tmds2);
 void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2);
 
 #endif

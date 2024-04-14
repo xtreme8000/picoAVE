@@ -7,16 +7,30 @@
 #define TMDS_CHANNEL_COUNT 3
 
 struct tmds_data3 {
-	bool vsync;
-	bool allocated;
-	size_t encode_offset;
-	size_t encode_length;
+	enum tmds_data_type {
+		TYPE_CONST,
+		TYPE_VIDEO,
+		TYPE_PACKET,
+	} type;
+	union {
+		struct {
+			uint32_t* audio_data;
+			size_t audio_length;
+		};
+		struct {
+			bool vsync;
+			bool last_line;
+			size_t encode_offset;
+			size_t encode_length;
+		};
+	};
 	size_t length;
 	uint32_t* ptr[TMDS_CHANNEL_COUNT];
 };
 
-void video_output_init(uint gpio_channels[3], uint gpio_clk, size_t capacity,
-					   queue_t* unused_queue);
+void video_output_init(uint gpio_channels[3], uint gpio_clk,
+					   queue_t* unused_queue_video,
+					   queue_t* unused_queue_packets);
 void video_output_start(void);
 void video_output_submit(struct tmds_data3* data);
 

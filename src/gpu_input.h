@@ -10,7 +10,9 @@ struct gpu_data {
 	uint32_t* ptr;
 };
 
-void gpu_input_init(size_t capacity, size_t buffer_length, uint gpio_base);
+void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
+					queue_t* unused_queue_audio, queue_t* receive_queue_audio,
+					uint audio_base, uint audio_ws);
 void gpu_input_start(void);
 struct gpu_data* gpu_input_receive(void);
 void gpu_input_release(struct gpu_data* d);

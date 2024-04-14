@@ -48,3 +48,35 @@ void packet_spd_info(struct packet* p, const char* vendor,
 
 	apply_checksum(p);
 }
+
+void packet_audio_info(struct packet* p) {
+	memset(p->header, 0, sizeof(p->header));
+	memset(p->data, 0, sizeof(p->data));
+
+	p->header[0] = 0x84;
+	p->header[1] = 0x01;
+	p->header[2] = 10;
+
+	p->data[1] = 1 | (1 << 4);
+	p->data[2] = 1 | (3 << 2);
+	p->data[4] = 0;
+	p->data[5] = (0 << 3) | (0 << 7);
+
+	apply_checksum(p);
+}
+
+void packet_audio_clk_regen(struct packet* p, uint32_t n, uint32_t cts) {
+	p->header[0] = 0x01;
+	p->header[1] = 0x00;
+	p->header[2] = 0x00;
+
+	for(size_t k = 0; k < PACKET_BODY_LENGTH; k += PACKET_SUBLANE_LENGTH) {
+		p->data[k + 0] = 0;
+		p->data[k + 1] = (cts >> 16) & 0xFF;
+		p->data[k + 2] = (cts >> 8) & 0xFF;
+		p->data[k + 3] = cts & 0xFF;
+		p->data[k + 4] = (n >> 16) & 0xFF;
+		p->data[k + 5] = (n >> 8) & 0xFF;
+		p->data[k + 6] = n & 0xFF;
+	}
+}

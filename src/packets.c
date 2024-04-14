@@ -1,17 +1,19 @@
 #include <assert.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #include "packets.h"
+#include "pico/stdlib.h"
 #include "tmds_encode.h"
 #include "utils.h"
 
-static uint8_t bch_lookup[256];
+static uint8_t CORE0_DATA bch_lookup[256];
+static uint8_t CORE0_DATA parity_lookup[256];
 static uint32_t header_lookup[256];
 static uint32_t sub_lookup[256];
-static uint8_t parity_lookup[256];
 
 static uint8_t bch_gen(uint8_t in) {
 	uint8_t state = 0;
@@ -40,19 +42,10 @@ static uint8_t bch_calc(uint8_t* data, size_t length) {
 	return state;
 }
 
-static size_t parity_calc(uint8_t* data, size_t length) {
-	size_t parity = 0;
-
-	for(size_t k = 0; k < length; k++)
-		parity ^= data[k];
-
-	return parity_lookup[parity];
-}
-
 void packets_init() {
 	for(size_t k = 0; k < 256; k++) {
 		bch_lookup[k] = bch_gen(k);
-		parity_lookup[k] = __builtin_popcount(k) & 1;
+		parity_lookup[k] = __builtin_parity(k);
 
 		header_lookup[k] = (READ_BIT(k, 7) << 30) | (READ_BIT(k, 6) << 26)
 			| (READ_BIT(k, 5) << 22) | (READ_BIT(k, 4) << 18)
@@ -148,7 +141,61 @@ void packets_encode(struct packet* p, size_t amount, bool hsync, bool vsync,
 	*(tmds2++) = DATA_ISLAND_GUARD_BAND;
 }
 
-// length of encoded packets
+// length of encoded packets in pixels
 size_t packets_length(size_t amount) {
 	return amount * PACKET_BODY_LENGTH + 4 + DATA_ISLAND_PREAMBLE_LENGTH;
+}
+
+// encode audio with constant h+vsync
+void packets_encode_audio(uint32_t samples[4], size_t frame, bool hsync,
+						  bool vsync, uint32_t* tmds0, uint32_t* tmds1,
+						  uint32_t* tmds2) {
+	// preamble (8 pixels)
+	for(size_t k = 0; k < DATA_ISLAND_PREAMBLE_LENGTH / 2; k++) {
+		*(tmds0++) = tmds_sync_lookup(vsync, hsync);
+		*(tmds1++) = tmds_sync_symbols[1]; // CTL0 = 1, CTL1 = 0
+		*(tmds2++) = tmds_sync_symbols[1]; // CTL2 = 1, CTL3 = 0
+	}
+
+	size_t sync_state = 0x0C | (vsync << 1) | hsync;
+	uint32_t terc4_sync = tmds_terc4_symbols2[(sync_state << 4) | sync_state];
+
+	// leading guard band (2 pixels)
+	*(tmds0++) = terc4_sync;
+	*(tmds1++) = DATA_ISLAND_GUARD_BAND;
+	*(tmds2++) = DATA_ISLAND_GUARD_BAND;
+
+	struct packet p;
+	p.header[0] = 0x02;
+	p.header[1] = 0x0F;
+	p.header[2] = (frame == 0) ? 0x10 : 0x00;
+
+	for(size_t k = 0; k < PACKET_BODY_LENGTH; k += PACKET_SUBLANE_LENGTH) {
+		uint32_t s = *(samples++);
+
+		// left channel
+		p.data[k + 0] = 0;
+		p.data[k + 1] = (s >> 16) & 0xFF;
+		p.data[k + 2] = s >> 24;
+
+		// right channel
+		p.data[k + 3] = 0;
+		p.data[k + 4] = s & 0xFF;
+		p.data[k + 5] = (s >> 8) & 0xFF;
+
+		uint8_t p_left = parity_lookup[p.data[k + 1] ^ p.data[k + 2] ^ 0x01];
+		uint8_t p_right = parity_lookup[p.data[k + 4] ^ p.data[k + 5] ^ 0x01];
+
+		p.data[k + 6] = (p_right << 7) | (p_left << 3) | 0x11;
+	}
+
+	data_encode(&p, hsync, vsync, true, tmds0, tmds1, tmds2);
+	tmds0 += PACKET_BODY_LENGTH / 2;
+	tmds1 += PACKET_BODY_LENGTH / 2;
+	tmds2 += PACKET_BODY_LENGTH / 2;
+
+	// trailing guard band (2 pixels)
+	*(tmds0++) = terc4_sync;
+	*(tmds1++) = DATA_ISLAND_GUARD_BAND;
+	*(tmds2++) = DATA_ISLAND_GUARD_BAND;
 }

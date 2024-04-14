@@ -18,6 +18,9 @@ struct packet {
 void packets_init(void);
 void packets_encode(struct packet* p, size_t amount, bool hsync, bool vsync,
 					uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2);
+void packets_encode_audio(uint32_t samples[4], size_t frame, bool hsync,
+						  bool vsync, uint32_t* tmds0, uint32_t* tmds1,
+						  uint32_t* tmds2);
 size_t packets_length(size_t amount);
 
 #endif

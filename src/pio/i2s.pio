@@ -1,0 +1,54 @@
+.program pio_i2s
+
+// EXECCTRL_JMP_PIN = WS
+// PIN 0 = SD
+// PIN 1 = SCK
+// 16 bits, msb first, right justified
+
+.wrap_target
+left:
+    wait 0 pin 1
+    wait 1 pin 1
+    jmp pin, left_continue
+left_end:
+    mov x, isr
+    jmp right_continue
+
+right:
+    wait 0 pin 1
+    wait 1 pin 1
+    jmp pin, right_end
+right_continue:
+    in pins, 1
+    jmp right
+right_end:
+    in x, 16
+    push block
+    // jmp left_continue
+
+left_continue:
+    in pins, 1
+    // jmp left
+.wrap
+
+% c-sdk {
+static inline void pio_i2s_program_init(PIO pio, uint sm, uint offset, uint pin_base, uint pin_ws) {
+    for(uint k = pin_base; k < pin_base + 2; k++) {
+        gpio_init(k);
+        gpio_set_input_enabled(k, true);
+        gpio_disable_pulls(k);
+    }
+
+    gpio_init(pin_ws);
+    gpio_set_input_enabled(pin_ws, true);
+    gpio_disable_pulls(pin_ws);
+
+    pio_sm_config c = pio_i2s_program_get_default_config(offset);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_in_shift(&c, false, false, 32);
+    sm_config_set_in_pins(&c, pin_base);
+    sm_config_set_jmp_pin(&c, pin_ws);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, false);
+}
+%}

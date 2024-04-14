@@ -24,6 +24,7 @@ add_executable(picoave
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/clock.pio)
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/serializer.pio)
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/capture.pio)
+pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/i2s.pio)
 
 target_compile_options(picoave PUBLIC
         ### Gnu/Clang C Options

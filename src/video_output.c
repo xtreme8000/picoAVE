@@ -13,11 +13,14 @@ struct video_output {
 	struct tmds_clock channel_clock;
 	struct tmds_serializer channels[TMDS_CHANNEL_COUNT];
 	struct fifo_image pending_queue;
-	struct fifo_image input_queue;
-	queue_t* unused_queue;
+	struct fifo_image input_queue_video;
+	struct fifo_image input_queue_packets;
+	queue_t* unused_queue_video;
+	queue_t* unused_queue_packets;
 	struct {
+		size_t packet_rate_limit;
 		bool active;
-		int y;
+		size_t y;
 	} state;
 };
 
@@ -29,83 +32,99 @@ uint32_t tmds_vsync_porch0[FRAME_WIDTH / 2];
 uint32_t tmds_vsync_porch1[FRAME_WIDTH / 2];
 uint32_t tmds_vsync_porch2[FRAME_WIDTH / 2];
 
-uint32_t tmds_vsync_data0[FRAME_WIDTH / 2];
-uint32_t tmds_vsync_data1[FRAME_WIDTH / 2];
-uint32_t tmds_vsync_data2[FRAME_WIDTH / 2];
-
-uint32_t tmds_image_porch0[FRAME_H_BLANK / 2];
-uint32_t tmds_image_porch1[FRAME_H_BLANK / 2];
-uint32_t tmds_image_porch2[FRAME_H_BLANK / 2];
-
 static struct video_output CORE0_DATA vdo;
 static struct tmds_data3 CORE0_DATA video_signal_parts[] = {
 	{
-		.allocated = false,
-		.ptr = {tmds_vsync_porch0, tmds_vsync_porch1, tmds_vsync_porch2},
-		.length = FRAME_WIDTH / 2,
+		.type = TYPE_CONST,
+		.ptr = {tmds_vsync_porch0 + (FRAME_WIDTH - FRAME_BUFFER_WIDTH) / 2,
+				tmds_vsync_porch1 + (FRAME_WIDTH - FRAME_BUFFER_WIDTH) / 2,
+				tmds_vsync_porch2 + (FRAME_WIDTH - FRAME_BUFFER_WIDTH) / 2},
+		.length = FRAME_BUFFER_WIDTH / 2,
 	},
 	{
-		.allocated = false,
+		.type = TYPE_CONST,
 		.ptr = {tmds_vsync_pulse0, tmds_vsync_pulse1, tmds_vsync_pulse2},
 		.length = FRAME_WIDTH / 2,
 	},
 	{
-		.allocated = false,
-		.ptr = {tmds_vsync_data0, tmds_vsync_data1, tmds_vsync_data2},
-		.length = FRAME_WIDTH / 2,
+		.type = TYPE_CONST,
+		.ptr = {tmds_vsync_porch0, tmds_vsync_porch1, tmds_vsync_porch2},
+		.length = (FRAME_WIDTH - FRAME_BUFFER_WIDTH) / 2,
 	},
 	{
-		.allocated = false,
-		.ptr = {tmds_image_porch0, tmds_image_porch1, tmds_image_porch2},
-		.length = FRAME_H_BLANK / 2,
+		.type = TYPE_CONST,
+		.ptr = {tmds_vsync_porch0, tmds_vsync_porch1, tmds_vsync_porch2},
+		.length = FRAME_WIDTH / 2,
 	},
 };
 
 static void build_sync_tables(void) {
-	tmds_encode_sync(false, tmds_vsync_pulse0, tmds_vsync_pulse1,
+	tmds_encode_sync(FRAME_WIDTH, false, tmds_vsync_pulse0, tmds_vsync_pulse1,
 					 tmds_vsync_pulse2);
-	tmds_encode_sync(true, tmds_vsync_porch0, tmds_vsync_porch1,
+	tmds_encode_sync(FRAME_WIDTH, true, tmds_vsync_porch0, tmds_vsync_porch1,
 					 tmds_vsync_porch2);
-	tmds_encode_sync_video(tmds_image_porch0, tmds_image_porch1,
-						   tmds_image_porch2);
 
-	struct packet packets[2];
+	struct packet packets[4];
 	packet_avi_info(packets + 0);
 	packet_spd_info(packets + 1, "picoAVE", "picoAVE");
+	packet_audio_info(packets + 2);
+	packet_audio_clk_regen(packets + 3, 6144, 27000);
 
-	tmds_encode_sync(true, tmds_vsync_data0, tmds_vsync_data1,
-					 tmds_vsync_data2);
-	packets_encode(packets, 2, true, true, tmds_vsync_data0 + FRAME_H_BLANK,
-				   tmds_vsync_data1 + FRAME_H_BLANK,
-				   tmds_vsync_data2 + FRAME_H_BLANK);
+	packets_encode(packets, sizeof(packets) / sizeof(*packets), true, false,
+				   tmds_vsync_pulse0 + FRAME_H_BLANK / 2,
+				   tmds_vsync_pulse1 + FRAME_H_BLANK / 2,
+				   tmds_vsync_pulse2 + FRAME_H_BLANK / 2);
 }
 
 static struct tmds_data3* CORE0_CODE build_video_signal(void) {
 	struct tmds_data3* result = NULL;
 
-	if(vdo.state.y < FRAME_V_PORCH_FRONT) {
-		result = (vdo.state.y == 0) ? video_signal_parts + 2 :
-									  video_signal_parts + 0;
-		vdo.state.y++;
-	} else if(vdo.state.y < FRAME_V_PORCH_FRONT + FRAME_V_SYNC) {
+	if(vdo.state.y >= FRAME_V_PORCH_FRONT
+	   && vdo.state.y < FRAME_V_PORCH_FRONT + FRAME_V_SYNC) {
 		result = video_signal_parts + 1;
 		vdo.state.y++;
+		vdo.state.packet_rate_limit += 8;
 	} else if(vdo.state.y < FRAME_V_BLANK) {
-		result = video_signal_parts + 0;
-		vdo.state.y++;
+		if(vdo.state.active) {
+			result = video_signal_parts + 0;
+			vdo.state.active = false;
+			vdo.state.y++;
+			vdo.state.packet_rate_limit += 8;
+		} else {
+			if(!fifo_image_empty(&vdo.input_queue_packets)
+			   && vdo.state.packet_rate_limit >= 21
+			   && fifo_image_pop(&vdo.input_queue_packets, &result)) {
+				vdo.state.packet_rate_limit -= 21;
+				vdo.state.active = true;
+			} else {
+				result = video_signal_parts + 3;
+				vdo.state.y++;
+				vdo.state.packet_rate_limit += 8;
+			}
+		}
 	} else if(!vdo.state.active) {
-		result = video_signal_parts + 3;
+		if(!fifo_image_empty(&vdo.input_queue_packets)
+		   && vdo.state.packet_rate_limit >= 21
+		   && fifo_image_pop(&vdo.input_queue_packets, &result)) {
+			vdo.state.packet_rate_limit -= 21;
+		} else {
+			result = video_signal_parts + 2;
+		}
 		vdo.state.active = true;
-	} else if(fifo_image_pop(&vdo.input_queue, &result)) {
+	} else if(fifo_image_pop(&vdo.input_queue_video, &result)) {
 		if(!(vdo.state.y == FRAME_V_BLANK && !result->vsync)) {
 			vdo.state.y++;
+			vdo.state.packet_rate_limit += 8;
 			vdo.state.active = false;
 		}
-	} else {
+	}
+
+	if(!result) {
 		// last resort, provide anything to keep serializers in sync
 		gpio_set_mask(1 << PICO_DEFAULT_LED_PIN);
 		result = video_signal_parts + 0;
 		vdo.state.y++;
+		vdo.state.packet_rate_limit = 0;
 	}
 
 	if(vdo.state.y >= FRAME_HEIGHT)
@@ -155,8 +174,15 @@ static void CORE0_CODE release_sent_entries(void) {
 			for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++)
 				vdo.channels[k].pending_transfers--;
 
-			if(data->allocated)
-				queue_add_blocking(vdo.unused_queue, &data);
+			switch(data->type) {
+				case TYPE_VIDEO:
+					queue_add_blocking(vdo.unused_queue_video, &data);
+					break;
+				case TYPE_PACKET:
+					queue_add_blocking(vdo.unused_queue_packets, &data);
+					break;
+				default:
+			}
 		}
 	}
 }
@@ -169,15 +195,21 @@ static void CORE0_CODE dma_isr0(void) {
 	refill_channels();
 }
 
-void video_output_init(uint gpio_channels[3], uint gpio_clk, size_t capacity,
-					   queue_t* unused_queue) {
-	assert(capacity > 0);
+void video_output_init(uint gpio_channels[3], uint gpio_clk,
+					   queue_t* unused_queue_video,
+					   queue_t* unused_queue_packets) {
+	assert(unused_queue_video && unused_queue_packets);
 
 	build_sync_tables();
 
-	fifo_image_init(&vdo.input_queue, capacity);
+	fifo_image_init(&vdo.input_queue_video, unused_queue_video->element_count);
+	fifo_image_init(&vdo.input_queue_packets,
+					unused_queue_packets->element_count);
 	fifo_image_init(&vdo.pending_queue, TMDS_QUEUE_LENGTH * 2);
-	vdo.unused_queue = unused_queue;
+	vdo.unused_queue_video = unused_queue_video;
+	vdo.unused_queue_packets = unused_queue_packets;
+
+	vdo.state.packet_rate_limit = 0;
 	vdo.state.y = 0;
 	vdo.state.active = false;
 
@@ -202,5 +234,14 @@ void video_output_start() {
 
 void video_output_submit(struct tmds_data3* data) {
 	assert(data);
-	fifo_image_push_blocking(&vdo.input_queue, &data);
+
+	switch(data->type) {
+		case TYPE_CONST:
+		case TYPE_VIDEO:
+			fifo_image_push_blocking(&vdo.input_queue_video, &data);
+			break;
+		case TYPE_PACKET:
+			fifo_image_push_blocking(&vdo.input_queue_packets, &data);
+			break;
+	}
 }

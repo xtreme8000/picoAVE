@@ -12,4 +12,12 @@
 #define CORE1_DATA __scratch_y("core1_data")
 #define CORE1_CODE __scratch_y("core1_code")
 
+static inline uint32_t next_pow2(uint32_t x) {
+	return (x == 1) ? 1 : 1 << (32 - __builtin_clz(x - 1));
+}
+
+static inline size_t min_n(size_t a, size_t b) {
+	return a < b ? a : b;
+}
+
 #endif

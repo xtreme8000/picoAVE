@@ -16,14 +16,51 @@
 #include "utils.h"
 #include "video_output.h"
 
-uint32_t tmds_image_00h[FRAME_VIS_WIDTH / 2];
-uint32_t tmds_image_10h[FRAME_VIS_WIDTH / 2];
-uint32_t tmds_image_80h[FRAME_VIS_WIDTH / 2];
+uint32_t tmds_image_00h[FRAME_BUFFER_WIDTH / 2];
+uint32_t tmds_image_10h[FRAME_BUFFER_WIDTH / 2];
+uint32_t tmds_image_80h[FRAME_BUFFER_WIDTH / 2];
 
-queue_t queue_unused;
+queue_t queue_unused_packets;
+queue_t queue_unused_video;
+queue_t queue_unused_audio;
+
 queue_t queue_test;
+queue_t queue_test_audio;
 
 void thread2(void);
+
+struct audio_packet_encoding {
+	struct tmds_data3* data;
+	size_t index;
+};
+
+static void process_audio(struct audio_packet_encoding* a) {
+	if(!a->data) {
+		if(!queue_try_remove(&queue_test_audio, &a->data))
+			a->data = NULL;
+		a->index = 0;
+	}
+
+	if(a->data) {
+		struct tmds_data3* obj;
+		if(queue_try_remove(&queue_unused_packets, &obj)) {
+			packets_encode_audio(a->data->audio_data + a->index, a->index,
+								 false, true,
+								 obj->ptr[0] + FRAME_H_PORCH_FRONT / 2,
+								 obj->ptr[1] + FRAME_H_PORCH_FRONT / 2,
+								 obj->ptr[2] + FRAME_H_PORCH_FRONT / 2);
+
+			video_output_submit(obj);
+
+			a->index += 4;
+
+			if(a->index >= a->data->audio_length) {
+				queue_add_blocking(&queue_unused_audio, &a->data);
+				a->data = NULL;
+			}
+		}
+	}
+}
 
 int main() {
 	// set_sys_clock_pll(336 * 1000 * 1000, 7, 6); // 8 MHz
@@ -44,35 +81,72 @@ int main() {
 	gpio_init(PICO_DEFAULT_LED_PIN);
 	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
-	for(size_t k = 0; k < FRAME_VIS_WIDTH / 2; k++) {
+	for(size_t k = 0; k < FRAME_BUFFER_WIDTH / 2; k++) {
 		tmds_image_00h[k] = 0xffd00;
 		tmds_image_10h[k] = tmds_symbols_10h[4];
 		tmds_image_80h[k] = tmds_symbols_80h[4];
 	}
 
-	queue_init(&queue_unused, sizeof(struct tmds_data3*), 16);
-	queue_init(&queue_test, sizeof(struct tmds_data3*), 16);
+	tmds_encode_sync_video(tmds_image_00h, tmds_image_10h, tmds_image_80h);
 
-	for(int k = 0; k < queue_unused.element_count; k++) {
+	queue_init(&queue_unused_video, sizeof(struct tmds_data3*), 12);
+	queue_init(&queue_unused_audio, sizeof(struct tmds_data3*), 8);
+	queue_init(&queue_unused_packets, sizeof(struct tmds_data3*), 48);
+	queue_init(&queue_test, sizeof(struct tmds_data3*),
+			   queue_unused_video.element_count);
+	queue_init(&queue_test_audio, sizeof(struct tmds_data3*),
+			   queue_unused_audio.element_count);
+
+	for(int k = 0; k < queue_unused_video.element_count; k++) {
 		struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
-		obj->allocated = true;
+		obj->type = TYPE_VIDEO;
 		obj->encode_offset = 0;
 		obj->encode_length = 0;
-		obj->length = FRAME_VIS_WIDTH / 2;
-		obj->ptr[0] = tmds_image_00h;
+		obj->length = FRAME_BUFFER_WIDTH / 2;
+		obj->ptr[0] = malloc(obj->length * sizeof(uint32_t));
 		obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
 		obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
 
-		queue_add_blocking(&queue_unused, &obj);
+		queue_add_blocking(&queue_unused_video, &obj);
+	}
+
+	for(int k = 0; k < queue_unused_audio.element_count; k++) {
+		struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
+		obj->audio_length = 192;
+		obj->audio_data = malloc(obj->audio_length * sizeof(uint32_t));
+
+		queue_add_blocking(&queue_unused_audio, &obj);
+	}
+
+	for(int k = 0; k < queue_unused_packets.element_count; k++) {
+		struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
+		obj->type = TYPE_PACKET;
+		obj->length = (FRAME_WIDTH - FRAME_BUFFER_WIDTH) / 2;
+		obj->ptr[0] = malloc(obj->length * sizeof(uint32_t));
+		obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
+		obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
+
+		tmds_encode_sync(obj->length * 2, true, obj->ptr[0], obj->ptr[1],
+						 obj->ptr[2]);
+
+		queue_add_blocking(&queue_unused_packets, &obj);
 	}
 
 	tmds_encode_init();
 	tmds_encode_setup();
 	packets_init();
-	video_output_init((uint[]) {18, 20, 26}, 16, 8, &queue_unused);
+	video_output_init((uint[]) {18, 20, 26}, 16, &queue_unused_video,
+					  &queue_unused_packets);
 
 	multicore_launch_core1(thread2);
 	video_output_start();
+
+	struct audio_packet_encoding audio_encoder = {
+		.data = NULL,
+		.index = 0,
+	};
+
+	size_t cnt = 0;
 
 	while(1) {
 		struct tmds_data3* obj;
@@ -88,15 +162,29 @@ int main() {
 					= tmds_symbols_80h[bias];
 		}
 
+		bool finished = obj->last_line;
 		video_output_submit(obj);
+
+		if(finished) {
+			while(queue_is_empty(&queue_test))
+				process_audio(&audio_encoder);
+		} else {
+			process_audio(&audio_encoder);
+		}
+
+		if(finished) {
+			cnt++;
+			if(cnt == 15) {
+				cnt = 0;
+				gpio_xor_mask(1 << PICO_DEFAULT_LED_PIN);
+			}
+		}
 	}
 
 	return 0;
 }
 
-size_t min_n(size_t a, size_t b) {
-	return a < b ? a : b;
-}
+#define BLANK_MASK 0xF000F000 // check any Y >= 16
 
 void advance_input(size_t* idx, struct gpu_data** data, size_t amount) {
 	*idx += amount;
@@ -116,7 +204,7 @@ bool find_image_start(struct gpu_data** data, size_t* start, size_t* width) {
 	size_t k = 0;
 
 	while(1) {
-		bool blanking = (current_data->ptr[k] & 0xFF00FF00) == 0;
+		bool blanking = (current_data->ptr[k] & BLANK_MASK) == 0;
 
 		if(unlikely(prev_blanking && !blanking)) {
 			video_start = k;
@@ -130,7 +218,7 @@ bool find_image_start(struct gpu_data** data, size_t* start, size_t* width) {
 	}
 
 	while(1) {
-		bool blanking = (current_data->ptr[k] & 0xFF00FF00) == 0;
+		bool blanking = (current_data->ptr[k] & BLANK_MASK) == 0;
 
 		if(unlikely(blanking)) {
 			video_end = k;
@@ -149,35 +237,44 @@ bool find_image_start(struct gpu_data** data, size_t* start, size_t* width) {
 
 struct tmds_data3 empty_line;
 struct tmds_data3 empty_line_sync;
+struct tmds_data3 empty_line_last;
 
 void thread2() {
-	empty_line = empty_line_sync = (struct tmds_data3) {
-		.allocated = false,
+	empty_line = empty_line_sync = empty_line_last = (struct tmds_data3) {
+		.type = TYPE_CONST,
 		.encode_length = 0,
-		.length = FRAME_VIS_WIDTH / 2,
+		.length = FRAME_BUFFER_WIDTH / 2,
 		.ptr = {tmds_image_00h, tmds_image_10h, tmds_image_80h},
 	};
 
 	empty_line.vsync = false;
+	empty_line.last_line = false;
+
 	empty_line_sync.vsync = true;
+	empty_line_sync.last_line = false;
+
+	empty_line_last.vsync = false;
+	empty_line_last.last_line = true;
 
 	tmds_encode_setup();
 
 	// TODO: only 32 because of an overflow during following hsync scan
-	gpu_input_init(32, FRAME_WIDTH / 2 * 2, 2);
+	gpu_input_init(32, FRAME_WIDTH / 2 * 2, 2, &queue_unused_audio,
+				   &queue_test_audio, 12, 11);
 	gpu_input_start();
 
-	while(!queue_is_full(&queue_unused))
+	while(!queue_is_full(&queue_unused_video))
 		tight_loop_contents();
 
-	for(int k = 0; k < queue_unused.element_count; k++) {
+	for(int k = 0; k < queue_unused_video.element_count; k++) {
 		struct tmds_data3* obj;
-		queue_remove_blocking(&queue_unused, &obj);
+		queue_remove_blocking(&queue_unused_video, &obj);
 
+		memcpy(obj->ptr[0], tmds_image_00h, sizeof(tmds_image_00h));
 		memcpy(obj->ptr[1], tmds_image_10h, sizeof(tmds_image_10h));
 		memcpy(obj->ptr[2], tmds_image_80h, sizeof(tmds_image_80h));
 
-		queue_add_blocking(&queue_unused, &obj);
+		queue_add_blocking(&queue_unused_video, &obj);
 	}
 
 	for(int k = 0; k < FRAME_HEIGHT / 3 * 60; k++) {
@@ -199,7 +296,7 @@ void thread2() {
 	bool prev_blank = false;
 
 	while(1) {
-		bool blanking = (current_data->ptr[current_idx] & 0xFF00FF00) == 0;
+		bool blanking = (current_data->ptr[current_idx] & BLANK_MASK) == 0;
 
 		if(prev_blank && !blanking)
 			break;
@@ -211,7 +308,7 @@ void thread2() {
 	size_t video_height = 0;
 
 	while(1) {
-		bool blanking = (current_data->ptr[current_idx] & 0xFF00FF00) == 0;
+		bool blanking = (current_data->ptr[current_idx] & BLANK_MASK) == 0;
 
 		if(blanking)
 			break;
@@ -230,9 +327,10 @@ void thread2() {
 	while(1) {
 		for(size_t k = video_vstart; k < video_vend; k++) {
 			struct tmds_data3* obj;
-			queue_remove_blocking(&queue_unused, &obj);
+			queue_remove_blocking(&queue_unused_video, &obj);
 			obj->vsync = k == 0;
-			obj->encode_offset = video_xstart;
+			obj->last_line = k == FRAME_VIS_HEIGHT - 1;
+			obj->encode_offset = FRAME_BUFFER_OFFSET / 2 + video_xstart;
 			obj->encode_length = video_width_padded;
 
 			size_t line_idx = 0;
@@ -240,7 +338,7 @@ void thread2() {
 			while(line_idx < video_width) {
 				size_t can_take = min_n(video_width - line_idx,
 										current_data->length - current_idx);
-				memcpy(obj->ptr[2] + video_xstart + line_idx,
+				memcpy(obj->ptr[2] + obj->encode_offset + line_idx,
 					   current_data->ptr + current_idx,
 					   can_take * sizeof(uint32_t));
 
@@ -249,14 +347,14 @@ void thread2() {
 			}
 
 			while(line_idx < video_width_padded)
-				obj->ptr[2][video_xstart + line_idx++] = 0x10801080;
+				obj->ptr[2][obj->encode_offset + line_idx++] = 0x10801080;
 
-			size_t bias = tmds_encode_video(obj->ptr[2] + video_xstart, false,
-											video_width_padded,
-											obj->ptr[1] + video_xstart);
+			size_t bias = tmds_encode_video(obj->ptr[2] + obj->encode_offset,
+											false, video_width_padded,
+											obj->ptr[1] + obj->encode_offset);
 
-			if(video_xstart + video_width_padded < obj->length)
-				obj->ptr[1][video_xstart + video_width_padded]
+			if(obj->encode_offset + video_width_padded < obj->length)
+				obj->ptr[1][obj->encode_offset + video_width_padded]
 					= tmds_symbols_10h[bias];
 
 			queue_add_blocking(&queue_test, &obj);
@@ -265,7 +363,8 @@ void thread2() {
 		}
 
 		for(size_t k = video_vend; k < FRAME_VIS_HEIGHT; k++) {
-			struct tmds_data3* obj = (k == 0) ? &empty_line_sync : &empty_line;
+			struct tmds_data3* obj
+				= (k == FRAME_VIS_HEIGHT - 1) ? &empty_line_last : &empty_line;
 			queue_add_blocking(&queue_test, &obj);
 			advance_input(&current_idx, &current_data, FRAME_WIDTH / 2);
 		}

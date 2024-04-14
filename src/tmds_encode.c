@@ -168,11 +168,11 @@ void tmds_encode_setup() {
 	interp_set_config(interp1, 1, &c);
 }
 
-void tmds_encode_sync(bool vsync, uint32_t* tmds0, uint32_t* tmds1,
-					  uint32_t* tmds2) {
-	static_assert((FRAME_WIDTH % 2) == 0);
+void tmds_encode_sync(size_t length, bool vsync, uint32_t* tmds0,
+					  uint32_t* tmds1, uint32_t* tmds2) {
+	assert((length % 2) == 0);
 
-	for(size_t k = 0; k < FRAME_WIDTH / 2; k++) {
+	for(size_t k = 0; k < length / 2; k++) {
 		bool hsync = k >= FRAME_H_PORCH_FRONT / 2
 			&& k < (FRAME_H_PORCH_FRONT + FRAME_H_SYNC) / 2;
 
@@ -185,7 +185,7 @@ void tmds_encode_sync(bool vsync, uint32_t* tmds0, uint32_t* tmds1,
 void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2) {
 	static_assert((FRAME_H_BLANK % 2) == 0);
 
-	for(size_t k = 0; k < FRAME_H_BLANK / 2; k++) {
+	/*for(size_t k = 0; k < FRAME_H_BLANK / 2; k++) {
 		bool hsync = k >= FRAME_H_PORCH_FRONT / 2
 			&& k < (FRAME_H_PORCH_FRONT + FRAME_H_SYNC) / 2;
 
@@ -202,7 +202,18 @@ void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2) {
 			tmds1[k] = tmds_sync_symbols[1]; // CTL0 = 1, CTL1 = 0
 			tmds2[k] = tmds_sync_symbols[0]; // CTL2 = 0, CTL3 = 0
 		}
+	}*/
+
+	for(size_t k = 0; k < VIDEO_DATA_PREAMBLE_LENGTH / 2; k++) {
+		tmds0[k] = tmds_sync_lookup(true, true);
+		tmds1[k] = tmds_sync_symbols[1]; // CTL0 = 1, CTL1 = 0
+		tmds2[k] = tmds_sync_symbols[0]; // CTL2 = 0, CTL3 = 0
 	}
+
+	tmds0[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_0;
+	tmds1[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_1;
+	tmds2[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_2;
+}
 }
 
 static uint32_t tmds_encode3_y1y2(const uint32_t* pixbuf, size_t length,
