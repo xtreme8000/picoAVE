@@ -62,9 +62,8 @@ void packets_init() {
 static void encode_header(uint8_t* data, uint32_t* tmds0, bool hsync,
 						  bool vsync, bool first_packet) {
 	size_t pos = 0;
-	uint8_t sync4 = 0x08 | (vsync << 1) | hsync;
-	uint16_t sync16 = (sync4 << 12) | (sync4 << 8) | (sync4 << 4) | sync4;
-	uint32_t sync32 = (sync16 << 16) | sync16;
+	uint32_t sync32
+		= __mul_instruction(0x11111111, 0x08 | (vsync << 1) | hsync);
 	uint32_t sync32_f = sync32 & 0xFFFFFFF7;
 
 	for(size_t k = 0; k < PACKET_HEADER_LENGTH; k++) {
