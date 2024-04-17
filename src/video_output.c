@@ -12,7 +12,6 @@ FIFO_DEF(fifo_image, struct tmds_data3*)
 struct video_output {
 	struct tmds_clock channel_clock;
 	struct tmds_serializer channels[TMDS_CHANNEL_COUNT];
-	struct fifo_image pending_queue;
 	struct fifo_image input_queue_video;
 	struct fifo_image input_queue_packets;
 	queue_t* unused_queue_video;
@@ -143,59 +142,43 @@ static void CORE0_CODE refill_channels(void) {
 		struct tmds_data3* data = build_video_signal();
 
 		if(data) {
-			fifo_image_push(&vdo.pending_queue, &data);
-
-			for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++) {
-				ffifo_push(&vdo.channels[k].queue_send,
-						   &(struct tmds_data) {.ptr = data->ptr[k],
-												.length = data->length});
-				vdo.channels[k].pending_transfers++;
-			}
-		}
-	}
-}
-
-static void CORE0_CODE release_sent_entries(void) {
-	while(1) {
-		bool transfer_complete = true;
-
-		for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++) {
-			if(vdo.channels[k].pending_transfers < 3) {
-				transfer_complete = false;
-				break;
-			}
-		}
-
-		if(!transfer_complete)
-			break;
-
-		struct tmds_data3* data;
-		if(fifo_image_pop(&vdo.pending_queue, &data)) {
 			for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++)
-				vdo.channels[k].pending_transfers--;
-
-			switch(data->type) {
-				case TYPE_VIDEO:
-					queue_add_blocking(vdo.unused_queue_video, &data);
-					break;
-				case TYPE_PACKET:
-					queue_add_blocking(vdo.unused_queue_packets, &data);
-					break;
-				default:
-			}
+				ffifo_push(
+					&vdo.channels[k].queue_send,
+					&(struct tmds_data) {
+						.ptr = data->ptr[k],
+						.length = data->length,
+						.source = (data->type != TYPE_CONST) ? data : NULL,
+					});
 		}
 	}
 }
 
 static void CORE0_CODE dma_isr0(void) {
-	for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++)
-		tmds_serializer_transfer_callback(vdo.channels + k);
+	struct tmds_data3* completed[TMDS_CHANNEL_COUNT];
 
-	release_sent_entries();
+	// service serializers first, then release data later
+	for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++)
+		completed[k] = tmds_serializer_transfer_callback(vdo.channels + k);
+
+	for(size_t k = 0; k < TMDS_CHANNEL_COUNT; k++) {
+		if(completed[k] && (++completed[k]->transfers) >= TMDS_CHANNEL_COUNT) {
+			switch(completed[k]->type) {
+				case TYPE_VIDEO:
+					queue_add_blocking(vdo.unused_queue_video, completed + k);
+					break;
+				case TYPE_PACKET:
+					queue_add_blocking(vdo.unused_queue_packets, completed + k);
+					break;
+				default:
+			}
+		}
+	}
+
 	refill_channels();
 }
 
-void video_output_init(uint gpio_channels[3], uint gpio_clk,
+void video_output_init(uint gpio_channels[TMDS_CHANNEL_COUNT], uint gpio_clk,
 					   queue_t* unused_queue_video,
 					   queue_t* unused_queue_packets) {
 	assert(unused_queue_video && unused_queue_packets);
@@ -205,7 +188,6 @@ void video_output_init(uint gpio_channels[3], uint gpio_clk,
 	fifo_image_init(&vdo.input_queue_video, unused_queue_video->element_count);
 	fifo_image_init(&vdo.input_queue_packets,
 					unused_queue_packets->element_count);
-	fifo_image_init(&vdo.pending_queue, TMDS_QUEUE_LENGTH * 2);
 	vdo.unused_queue_video = unused_queue_video;
 	vdo.unused_queue_packets = unused_queue_packets;
 
@@ -234,6 +216,9 @@ void video_output_start() {
 
 void video_output_submit(struct tmds_data3* data) {
 	assert(data);
+
+	if(data->type != TYPE_CONST)
+		data->transfers = 0;
 
 	switch(data->type) {
 		case TYPE_CONST:

@@ -27,10 +27,13 @@ static void dma_tmds_configure(uint channel, uint other_channel, uint sm) {
 	dma_channel_set_irq0_enabled(channel, true);
 }
 
-bool CORE0_CODE tmds_serializer_transfer_callback(struct tmds_serializer* s) {
+struct tmds_data3* CORE0_CODE
+tmds_serializer_transfer_callback(struct tmds_serializer* s) {
 	for(size_t k = 0; k < 2; k++) {
 		if(dma_channel_get_irq0_status(s->dma_channels[k])) {
 			dma_channel_acknowledge_irq0(s->dma_channels[k]);
+
+			struct tmds_data3* completed = s->dma_data[k];
 
 			// TODO: needs LTO enabled, otherwise misaligns everything because
 			// of initial i-cache miss on (queue-)function calls
@@ -39,16 +42,17 @@ bool CORE0_CODE tmds_serializer_transfer_callback(struct tmds_serializer* s) {
 				dma_channel_set_read_addr(s->dma_channels[k], data.ptr, false);
 				dma_channel_set_trans_count(s->dma_channels[k], data.length,
 											false);
+				s->dma_data[k] = data.source;
 			} else {
 				gpio_set_mask(1 << PICO_DEFAULT_LED_PIN);
 				panic("must not be reached\n");
 			}
 
-			return true;
+			return completed;
 		}
 	}
 
-	return false;
+	return NULL;
 }
 
 void tmds_serializer_init() {
@@ -64,18 +68,17 @@ void tmds_serializer_create(struct tmds_serializer* s, uint gpio_base) {
 
 	ffifo_init(&s->queue_send, TMDS_QUEUE_LENGTH);
 
-	s->pending_transfers = 0;
-
 	while(!ffifo_full(&s->queue_send)) {
 		ffifo_push(&s->queue_send,
 				   &(struct tmds_data) {.ptr = dummy_data,
 										.length = sizeof(dummy_data)
 											/ sizeof(*dummy_data)});
-		s->pending_transfers--;
 	}
 
-	for(size_t k = 0; k < 2; k++)
+	for(size_t k = 0; k < 2; k++) {
 		s->dma_channels[k] = dma_claim_unused_channel(true);
+		s->dma_data[k] = NULL;
+	}
 
 	dma_tmds_configure(s->dma_channels[0], s->dma_channels[1], s->pio_sm);
 	dma_tmds_configure(s->dma_channels[1], s->dma_channels[0], s->pio_sm);

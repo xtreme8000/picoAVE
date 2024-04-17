@@ -26,9 +26,10 @@ struct tmds_data3 {
 	};
 	size_t length;
 	uint32_t* ptr[TMDS_CHANNEL_COUNT];
+	size_t transfers;
 };
 
-void video_output_init(uint gpio_channels[3], uint gpio_clk,
+void video_output_init(uint gpio_channels[TMDS_CHANNEL_COUNT], uint gpio_clk,
 					   queue_t* unused_queue_video,
 					   queue_t* unused_queue_packets);
 void video_output_start(void);

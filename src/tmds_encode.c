@@ -214,7 +214,6 @@ void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2) {
 	tmds1[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_1;
 	tmds2[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_2;
 }
-}
 
 static uint32_t tmds_encode3_y1y2(const uint32_t* pixbuf, size_t length,
 								  uint32_t bias, uint32_t* tmds) {

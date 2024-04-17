@@ -7,10 +7,10 @@
 #define READ_BIT(x, i) (((x) & (1 << (i))) ? 1 : 0)
 
 #define CORE0_DATA __scratch_x("core0_data")
-#define CORE0_CODE __scratch_x("core0_code")
+#define CORE0_CODE __scratch_x("core0_code") __attribute__((optimize("O2")))
 
 #define CORE1_DATA __scratch_y("core1_data")
-#define CORE1_CODE __scratch_y("core1_code")
+#define CORE1_CODE __scratch_y("core1_code") __attribute__((optimize("O2")))
 
 static inline uint32_t next_pow2(uint32_t x) {
 	return (x == 1) ? 1 : 1 << (32 - __builtin_clz(x - 1));
