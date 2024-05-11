@@ -19,6 +19,7 @@ add_executable(picoave
         src/tmds_serializer.c
         src/tmds_encode.c
         src/gpu_input.c
+        src/mem_pool.c
 )
 
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/clock.pio)

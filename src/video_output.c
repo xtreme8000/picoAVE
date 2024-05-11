@@ -14,8 +14,8 @@ struct video_output {
 	struct tmds_serializer channels[TMDS_CHANNEL_COUNT];
 	struct fifo_image input_queue_video;
 	struct fifo_image input_queue_packets;
-	queue_t* unused_queue_video;
-	queue_t* unused_queue_packets;
+	struct mem_pool* pool_video;
+	struct mem_pool* pool_packets;
 	struct {
 		size_t packet_rate_limit;
 		bool active;
@@ -165,10 +165,10 @@ static void CORE0_CODE dma_isr0(void) {
 		if(completed[k] && (++completed[k]->transfers) >= TMDS_CHANNEL_COUNT) {
 			switch(completed[k]->type) {
 				case TYPE_VIDEO:
-					queue_add_blocking(vdo.unused_queue_video, completed + k);
+					mem_pool_free(vdo.pool_video, completed[k]);
 					break;
 				case TYPE_PACKET:
-					queue_add_blocking(vdo.unused_queue_packets, completed + k);
+					mem_pool_free(vdo.pool_packets, completed[k]);
 					break;
 				default:
 			}
@@ -179,17 +179,16 @@ static void CORE0_CODE dma_isr0(void) {
 }
 
 void video_output_init(uint gpio_channels[TMDS_CHANNEL_COUNT], uint gpio_clk,
-					   queue_t* unused_queue_video,
-					   queue_t* unused_queue_packets) {
-	assert(unused_queue_video && unused_queue_packets);
+					   struct mem_pool* pool_video,
+					   struct mem_pool* pool_packets) {
+	assert(pool_video && pool_packets);
 
 	build_sync_tables();
 
-	fifo_image_init(&vdo.input_queue_video, unused_queue_video->element_count);
-	fifo_image_init(&vdo.input_queue_packets,
-					unused_queue_packets->element_count);
-	vdo.unused_queue_video = unused_queue_video;
-	vdo.unused_queue_packets = unused_queue_packets;
+	fifo_image_init(&vdo.input_queue_video, mem_pool_capacity(pool_video));
+	fifo_image_init(&vdo.input_queue_packets, mem_pool_capacity(pool_packets));
+	vdo.pool_video = pool_video;
+	vdo.pool_packets = pool_packets;
 
 	vdo.state.packet_rate_limit = 0;
 	vdo.state.y = 0;

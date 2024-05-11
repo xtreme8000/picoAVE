@@ -2,6 +2,7 @@
 #define GPU_INPUT_H
 
 #include "ffifo.h"
+#include "mem_pool.h"
 #include "pico/platform.h"
 
 struct gpu_data {
@@ -11,7 +12,7 @@ struct gpu_data {
 };
 
 void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
-					queue_t* unused_queue_audio, queue_t* receive_queue_audio,
+					struct mem_pool* pool_audio, queue_t* receive_queue_audio,
 					uint audio_base, uint audio_ws);
 void gpu_input_start(void);
 struct gpu_data* gpu_input_receive(void);

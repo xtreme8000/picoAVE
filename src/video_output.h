@@ -1,6 +1,7 @@
 #ifndef VIDEO_OUTPUT_H
 #define VIDEO_OUTPUT_H
 
+#include "mem_pool.h"
 #include "pico/util/queue.h"
 #include "tmds_serializer.h"
 
@@ -30,8 +31,8 @@ struct tmds_data3 {
 };
 
 void video_output_init(uint gpio_channels[TMDS_CHANNEL_COUNT], uint gpio_clk,
-					   queue_t* unused_queue_video,
-					   queue_t* unused_queue_packets);
+					   struct mem_pool* pool_video,
+					   struct mem_pool* pool_packets);
 void video_output_start(void);
 void video_output_submit(struct tmds_data3* data);
 

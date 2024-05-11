@@ -32,7 +32,7 @@ struct gpu_input {
 	struct {
 		uint dma_channels[2];
 		struct tmds_data3* dma_data[2];
-		queue_t* queue_unused;
+		struct mem_pool* pool_audio;
 		queue_t* queue_receive;
 		uint pio_sm;
 		uint pio_program_offset;
@@ -81,8 +81,9 @@ static void CORE1_CODE dma_isr1(void) {
 				queue_add_blocking(gi.audio.queue_receive,
 								   gi.audio.dma_data + k);
 
-			if(likely(queue_try_remove(gi.audio.queue_unused,
-									   gi.audio.dma_data + k))) {
+			gi.audio.dma_data[k] = mem_pool_try_alloc(gi.audio.pool_audio);
+
+			if(likely(gi.audio.dma_data[k])) {
 				dma_channel_set_write_addr(gi.audio.dma_channels[k],
 										   gi.audio.dma_data[k]->audio_data,
 										   false);
@@ -90,7 +91,6 @@ static void CORE1_CODE dma_isr1(void) {
 											gi.audio.dma_data[k]->audio_length,
 											false);
 			} else {
-				gi.audio.dma_data[k] = NULL;
 				dma_channel_set_write_addr(gi.audio.dma_channels[k],
 										   dummy_buffer, false);
 				dma_channel_set_trans_count(gi.audio.dma_channels[k],
@@ -115,7 +115,7 @@ static void dma_gpu_configure(uint channel, uint other_channel, uint sm,
 }
 
 void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
-					queue_t* unused_queue_audio, queue_t* receive_queue_audio,
+					struct mem_pool* pool_audio, queue_t* receive_queue_audio,
 					uint audio_base, uint audio_ws) {
 	assert(capacity > 2 && buffer_length > 0);
 
@@ -152,7 +152,7 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 
 	// audio
 
-	gi.audio.queue_unused = unused_queue_audio;
+	gi.audio.pool_audio = pool_audio;
 	gi.audio.queue_receive = receive_queue_audio;
 
 	gi.audio.pio_sm = pio_claim_unused_sm(pio1, true);
@@ -162,7 +162,7 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 
 	for(size_t k = 0; k < 2; k++) {
 		gi.audio.dma_channels[k] = dma_claim_unused_channel(true);
-		queue_remove_blocking(gi.audio.queue_unused, gi.audio.dma_data + k);
+		gi.audio.dma_data[k] = mem_pool_alloc(gi.audio.pool_audio);
 	}
 
 	dma_gpu_configure(gi.audio.dma_channels[0], gi.audio.dma_channels[1],

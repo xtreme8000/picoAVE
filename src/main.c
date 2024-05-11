@@ -11,6 +11,7 @@
 
 #include "frame.h"
 #include "gpu_input.h"
+#include "mem_pool.h"
 #include "packets.h"
 #include "tmds_encode.h"
 #include "utils.h"
@@ -20,14 +21,46 @@ uint32_t tmds_image_00h[FRAME_BUFFER_WIDTH / 2];
 uint32_t tmds_image_10h[FRAME_BUFFER_WIDTH / 2];
 uint32_t tmds_image_80h[FRAME_BUFFER_WIDTH / 2];
 
-queue_t queue_unused_packets;
-queue_t queue_unused_video;
-queue_t queue_unused_audio;
+struct mem_pool pool_packets;
+struct mem_pool pool_video;
+struct mem_pool pool_audio;
 
 queue_t queue_test;
 queue_t queue_test_audio;
 
 void thread2(void);
+
+static void* alloc_video() {
+	struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
+	obj->type = TYPE_VIDEO;
+	obj->encode_offset = 0;
+	obj->encode_length = 0;
+	obj->length = FRAME_BUFFER_WIDTH / 2;
+	obj->ptr[0] = malloc(obj->length * sizeof(uint32_t));
+	obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
+	obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
+	return obj;
+}
+
+static void* alloc_audio() {
+	struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
+	obj->audio_length = 192;
+	obj->audio_data = malloc(obj->audio_length * sizeof(uint32_t));
+	return obj;
+}
+
+static void* alloc_packet() {
+	struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
+	obj->type = TYPE_PACKET;
+	obj->length = (FRAME_WIDTH - FRAME_BUFFER_WIDTH) / 2;
+	obj->ptr[0] = malloc(obj->length * sizeof(uint32_t));
+	obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
+	obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
+
+	tmds_encode_sync(obj->length * 2, true, obj->ptr[0], obj->ptr[1],
+					 obj->ptr[2]);
+	return obj;
+}
 
 struct audio_packet_encoding {
 	struct tmds_data3* data;
@@ -42,8 +75,9 @@ static void process_audio(struct audio_packet_encoding* a) {
 	}
 
 	if(a->data) {
-		struct tmds_data3* obj;
-		if(queue_try_remove(&queue_unused_packets, &obj)) {
+		struct tmds_data3* obj = mem_pool_try_alloc(&pool_packets);
+
+		if(obj) {
 			packets_encode_audio(a->data->audio_data + a->index, a->index,
 								 false, true,
 								 obj->ptr[0] + FRAME_H_PORCH_FRONT / 2,
@@ -55,7 +89,7 @@ static void process_audio(struct audio_packet_encoding* a) {
 			a->index += 4;
 
 			if(a->index >= a->data->audio_length) {
-				queue_add_blocking(&queue_unused_audio, &a->data);
+				mem_pool_free(&pool_audio, a->data);
 				a->data = NULL;
 			}
 		}
@@ -89,54 +123,18 @@ int main() {
 
 	tmds_encode_sync_video(tmds_image_00h, tmds_image_10h, tmds_image_80h);
 
-	queue_init(&queue_unused_video, sizeof(struct tmds_data3*), 12);
-	queue_init(&queue_unused_audio, sizeof(struct tmds_data3*), 8);
-	queue_init(&queue_unused_packets, sizeof(struct tmds_data3*), 48);
+	mem_pool_create(&pool_video, alloc_video, 12);
+	mem_pool_create(&pool_audio, alloc_audio, 8);
+	mem_pool_create(&pool_packets, alloc_packet, 48);
 	queue_init(&queue_test, sizeof(struct tmds_data3*),
-			   queue_unused_video.element_count);
+			   mem_pool_capacity(&pool_video));
 	queue_init(&queue_test_audio, sizeof(struct tmds_data3*),
-			   queue_unused_audio.element_count);
-
-	for(int k = 0; k < queue_unused_video.element_count; k++) {
-		struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
-		obj->type = TYPE_VIDEO;
-		obj->encode_offset = 0;
-		obj->encode_length = 0;
-		obj->length = FRAME_BUFFER_WIDTH / 2;
-		obj->ptr[0] = malloc(obj->length * sizeof(uint32_t));
-		obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
-		obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
-
-		queue_add_blocking(&queue_unused_video, &obj);
-	}
-
-	for(int k = 0; k < queue_unused_audio.element_count; k++) {
-		struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
-		obj->audio_length = 192;
-		obj->audio_data = malloc(obj->audio_length * sizeof(uint32_t));
-
-		queue_add_blocking(&queue_unused_audio, &obj);
-	}
-
-	for(int k = 0; k < queue_unused_packets.element_count; k++) {
-		struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
-		obj->type = TYPE_PACKET;
-		obj->length = (FRAME_WIDTH - FRAME_BUFFER_WIDTH) / 2;
-		obj->ptr[0] = malloc(obj->length * sizeof(uint32_t));
-		obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
-		obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
-
-		tmds_encode_sync(obj->length * 2, true, obj->ptr[0], obj->ptr[1],
-						 obj->ptr[2]);
-
-		queue_add_blocking(&queue_unused_packets, &obj);
-	}
+			   mem_pool_capacity(&pool_audio));
 
 	tmds_encode_init();
 	tmds_encode_setup();
 	packets_init();
-	video_output_init((uint[]) {18, 20, 26}, 16, &queue_unused_video,
-					  &queue_unused_packets);
+	video_output_init((uint[]) {18, 20, 26}, 16, &pool_video, &pool_packets);
 
 	multicore_launch_core1(thread2);
 	video_output_start();
@@ -259,23 +257,25 @@ void thread2() {
 	tmds_encode_setup();
 
 	// TODO: only 32 because of an overflow during following hsync scan
-	gpu_input_init(32, FRAME_WIDTH / 2 * 2, 2, &queue_unused_audio,
-				   &queue_test_audio, 12, 11);
+	gpu_input_init(32, FRAME_WIDTH / 2 * 2, 2, &pool_audio, &queue_test_audio,
+				   12, 11);
 	gpu_input_start();
 
-	while(!queue_is_full(&queue_unused_video))
-		tight_loop_contents();
+	size_t video_objs_length = mem_pool_capacity(&pool_video);
+	struct tmds_data3** video_objs
+		= malloc(sizeof(struct tmds_data3*) * video_objs_length);
 
-	for(int k = 0; k < queue_unused_video.element_count; k++) {
-		struct tmds_data3* obj;
-		queue_remove_blocking(&queue_unused_video, &obj);
-
-		memcpy(obj->ptr[0], tmds_image_00h, sizeof(tmds_image_00h));
-		memcpy(obj->ptr[1], tmds_image_10h, sizeof(tmds_image_10h));
-		memcpy(obj->ptr[2], tmds_image_80h, sizeof(tmds_image_80h));
-
-		queue_add_blocking(&queue_unused_video, &obj);
+	for(size_t k = 0; k < video_objs_length; k++) {
+		video_objs[k] = mem_pool_alloc(&pool_video);
+		memcpy(video_objs[k]->ptr[0], tmds_image_00h, sizeof(tmds_image_00h));
+		memcpy(video_objs[k]->ptr[1], tmds_image_10h, sizeof(tmds_image_10h));
+		memcpy(video_objs[k]->ptr[2], tmds_image_80h, sizeof(tmds_image_80h));
 	}
+
+	for(size_t k = 0; k < video_objs_length; k++)
+		mem_pool_free(&pool_video, video_objs[k]);
+
+	free(video_objs);
 
 	for(int k = 0; k < FRAME_HEIGHT / 3 * 60; k++) {
 		struct gpu_data* in = gpu_input_receive();
@@ -326,8 +326,7 @@ void thread2() {
 
 	while(1) {
 		for(size_t k = video_vstart; k < video_vend; k++) {
-			struct tmds_data3* obj;
-			queue_remove_blocking(&queue_unused_video, &obj);
+			struct tmds_data3* obj = mem_pool_alloc(&pool_video);
 			obj->vsync = k == 0;
 			obj->last_line = k == FRAME_VIS_HEIGHT - 1;
 			obj->encode_offset = FRAME_BUFFER_OFFSET / 2 + video_xstart;
