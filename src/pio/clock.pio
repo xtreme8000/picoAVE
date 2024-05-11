@@ -12,7 +12,7 @@ static inline void pio_clock_program_init(PIO pio, uint sm, uint offset, uint pi
     for(uint k = pin_base; k < pin_base + 2; k++) {
         pio_gpio_init(pio, k);
         pio_sm_set_consecutive_pindirs(pio, sm, k, 1, true);
-        gpio_set_slew_rate(k, GPIO_SLEW_RATE_FAST);
+        gpio_set_slew_rate(k, GPIO_SLEW_RATE_SLOW);
         gpio_set_drive_strength(k, GPIO_DRIVE_STRENGTH_2MA);
     }
 
