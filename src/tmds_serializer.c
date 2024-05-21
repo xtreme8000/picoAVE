@@ -11,7 +11,9 @@
 #include "tmds_serializer.h"
 
 static uint pio_program_offset;
-static uint32_t dummy_data[32];
+
+#define DUMMY_DATA_LENGTH 1024
+static uint32_t dummy_data = 0xFF;
 
 static void dma_tmds_configure(uint channel, uint other_channel, uint sm) {
 	assert(channel != other_channel);
@@ -22,8 +24,8 @@ static void dma_tmds_configure(uint channel, uint other_channel, uint sm) {
 	channel_config_set_dreq(&c, pio_get_dreq(pio0, sm, true));
 	channel_config_set_read_increment(&c, true);
 	channel_config_set_write_increment(&c, false);
-	dma_channel_configure(channel, &c, &pio0->txf[sm], dummy_data,
-						  sizeof(dummy_data) / sizeof(*dummy_data), false);
+	dma_channel_configure(channel, &c, &pio0->txf[sm], &dummy_data,
+						  DUMMY_DATA_LENGTH, false);
 	dma_channel_set_irq0_enabled(channel, true);
 }
 
@@ -35,10 +37,13 @@ tmds_serializer_transfer_callback(struct tmds_serializer* s) {
 
 			struct tmds_data3* completed = s->dma_data[k];
 
-			// TODO: needs LTO enabled, otherwise misaligns everything because
-			// of initial i-cache miss on (queue-)function calls
 			struct tmds_data data;
 			if(likely(ffifo_pop(&s->queue_send, &data))) {
+				dma_channel_config c
+					= dma_get_channel_config(s->dma_channels[k]);
+				channel_config_set_read_increment(&c, data.ptr != &dummy_data);
+				dma_channel_set_config(s->dma_channels[k], &c, false);
+
 				dma_channel_set_read_addr(s->dma_channels[k], data.ptr, false);
 				dma_channel_set_trans_count(s->dma_channels[k], data.length,
 											false);
@@ -56,7 +61,6 @@ tmds_serializer_transfer_callback(struct tmds_serializer* s) {
 }
 
 void tmds_serializer_init() {
-	memset(dummy_data, 0xFF, sizeof(dummy_data));
 	pio_program_offset = pio_add_program(pio0, &pio_serializer_program);
 }
 
@@ -70,9 +74,11 @@ void tmds_serializer_create(struct tmds_serializer* s, uint gpio_base) {
 
 	while(!ffifo_full(&s->queue_send)) {
 		ffifo_push(&s->queue_send,
-				   &(struct tmds_data) {.ptr = dummy_data,
-										.length = sizeof(dummy_data)
-											/ sizeof(*dummy_data)});
+				   &(struct tmds_data) {
+					   .ptr = &dummy_data,
+					   .length = DUMMY_DATA_LENGTH,
+					   .source = NULL,
+				   });
 	}
 
 	for(size_t k = 0; k < 2; k++) {

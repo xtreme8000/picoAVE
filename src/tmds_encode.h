@@ -13,7 +13,6 @@
 #define VIDEO_DATA_GUARD_BAND_2 0xb32cc
 
 extern const uint16_t tmds_terc4_symbols[16];
-extern uint32_t tmds_terc4_symbols2[256];
 extern const uint32_t tmds_sync_symbols[4];
 extern const uint32_t tmds_symbols_10h[9];
 extern const uint32_t tmds_symbols_80h[9];

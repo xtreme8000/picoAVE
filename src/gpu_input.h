@@ -17,5 +17,6 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 void gpu_input_start(void);
 struct gpu_data* gpu_input_receive(void);
 void gpu_input_release(struct gpu_data* d);
+void gpu_input_drain(void);
 
 #endif

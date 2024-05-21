@@ -23,13 +23,13 @@ struct video_output {
 	} state;
 };
 
-uint32_t tmds_vsync_pulse0[FRAME_WIDTH / 2];
-uint32_t tmds_vsync_pulse1[FRAME_WIDTH / 2];
-uint32_t tmds_vsync_pulse2[FRAME_WIDTH / 2];
+static uint32_t tmds_vsync_pulse0[FRAME_WIDTH / 2];
+static uint32_t tmds_vsync_pulse1[FRAME_WIDTH / 2];
+static uint32_t tmds_vsync_pulse2[FRAME_WIDTH / 2];
 
-uint32_t tmds_vsync_porch0[FRAME_WIDTH / 2];
-uint32_t tmds_vsync_porch1[FRAME_WIDTH / 2];
-uint32_t tmds_vsync_porch2[FRAME_WIDTH / 2];
+static uint32_t tmds_vsync_porch0[FRAME_WIDTH / 2];
+static uint32_t tmds_vsync_porch1[FRAME_WIDTH / 2];
+static uint32_t tmds_vsync_porch2[FRAME_WIDTH / 2];
 
 static struct video_output CORE0_DATA vdo;
 static struct tmds_data3 CORE0_DATA video_signal_parts[] = {
@@ -90,8 +90,7 @@ static struct tmds_data3* CORE0_CODE build_video_signal(void) {
 			vdo.state.y++;
 			vdo.state.packet_rate_limit += 8;
 		} else {
-			if(!fifo_image_empty(&vdo.input_queue_packets)
-			   && vdo.state.packet_rate_limit >= 21
+			if(vdo.state.packet_rate_limit >= 21
 			   && fifo_image_pop(&vdo.input_queue_packets, &result)) {
 				vdo.state.packet_rate_limit -= 21;
 				vdo.state.active = true;
@@ -102,8 +101,7 @@ static struct tmds_data3* CORE0_CODE build_video_signal(void) {
 			}
 		}
 	} else if(!vdo.state.active) {
-		if(!fifo_image_empty(&vdo.input_queue_packets)
-		   && vdo.state.packet_rate_limit >= 21
+		if(vdo.state.packet_rate_limit >= 21
 		   && fifo_image_pop(&vdo.input_queue_packets, &result)) {
 			vdo.state.packet_rate_limit -= 21;
 		} else {

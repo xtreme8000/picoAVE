@@ -5,11 +5,10 @@
 #include "tmds_encode.h"
 #include "utils.h"
 
-uint32_t tmds_symbol0[256 * 9];
-uint32_t tmds_symbol1[256 * 16];
+static uint32_t tmds_symbol0[256 * 9];
+static uint32_t tmds_symbol1[256 * 16];
 
 // lsb is send first
-uint32_t tmds_terc4_symbols2[256];
 const uint16_t tmds_terc4_symbols[16] = {
 	0x29c, 0x263, 0x2e4, 0x2e2, 0x171, 0x11e, 0x18e, 0x13c,
 	0x2cc, 0x139, 0x19c, 0x2c6, 0x28e, 0x271, 0x163, 0x2c3,
@@ -123,13 +122,6 @@ void tmds_encode_init() {
 
 			tmds_symbol0[(prev << 8) | col] = (next << 28) | (symbol << 10);
 			tmds_symbol1[(col << 4) | prev] = (next << 28) | symbol;
-		}
-	}
-
-	for(size_t k = 0; k < 16; k++) {
-		for(size_t i = 0; i < 16; i++) {
-			tmds_terc4_symbols2[(k << 4) | i]
-				= (tmds_terc4_symbols[k] << 10) | tmds_terc4_symbols[i];
 		}
 	}
 }

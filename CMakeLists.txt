@@ -27,6 +27,10 @@ pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/serializer.pi
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/capture.pio)
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/i2s.pio)
 
+target_compile_definitions(picoave PRIVATE
+        PICO_STACK_SIZE=512
+)
+
 target_compile_options(picoave PUBLIC
         ### Gnu/Clang C Options
         $<$<COMPILE_LANG_AND_ID:C,GNU>:-fdiagnostics-color=always>

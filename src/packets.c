@@ -10,10 +10,11 @@
 #include "tmds_encode.h"
 #include "utils.h"
 
+static uint32_t CORE0_DATA tmds_terc4_symbols2[256];
 static uint8_t CORE0_DATA bch_lookup[256];
-static uint8_t CORE0_DATA parity_lookup[256];
+static uint32_t CORE0_DATA sub_lookup[256];
+static uint8_t parity_lookup[256];
 static uint32_t header_lookup[256];
-static uint32_t sub_lookup[256];
 
 static uint8_t bch_gen(uint8_t in) {
 	uint8_t state = 0;
@@ -56,6 +57,13 @@ void packets_init() {
 			| (READ_BIT(k, 3) << 20) | (READ_BIT(k, 1) << 16)
 			| (READ_BIT(k, 6) << 12) | (READ_BIT(k, 4) << 8)
 			| (READ_BIT(k, 2) << 4) | READ_BIT(k, 0);
+	}
+
+	for(size_t k = 0; k < 16; k++) {
+		for(size_t i = 0; i < 16; i++) {
+			tmds_terc4_symbols2[(k << 4) | i]
+				= (tmds_terc4_symbols[k] << 10) | tmds_terc4_symbols[i];
+		}
 	}
 }
 
