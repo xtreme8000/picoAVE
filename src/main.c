@@ -9,9 +9,11 @@
 #include "pico/stdlib.h"
 #include "pico/util/queue.h"
 
+#include "font.h"
 #include "frame.h"
 #include "gpu_input.h"
 #include "mem_pool.h"
+#include "metadata.h"
 #include "packets.h"
 #include "tmds_encode.h"
 #include "utils.h"
@@ -256,6 +258,8 @@ struct gpu_sync_state {
 	size_t video_width, video_width_padded;
 	struct gpu_data* current_data;
 	size_t current_idx;
+	char msg[32];
+	int msg_frames_visible;
 };
 
 void gpu_sync_video(struct gpu_sync_state* state) {
@@ -329,6 +333,11 @@ void gpu_sync_video(struct gpu_sync_state* state) {
 	state->video_width_padded = video_width_padded;
 	state->current_data = current_data;
 	state->current_idx = current_idx;
+
+	snprintf(state->msg, sizeof(state->msg),
+			 "%zux%zup [" PROJECT_NAME " " PROJECT_VERSION "]", video_width * 2,
+			 video_height);
+	state->msg_frames_visible = 60 * 10;
 }
 
 struct tmds_data3 empty_line;
@@ -382,6 +391,17 @@ void thread2() {
 				needs_resync = true;
 
 			size_t line_idx = 0;
+
+			if(gpu_sync.msg_frames_visible > 0
+			   && k < gpu_sync.video_vstart + FONT_CHAR_HEIGHT) {
+				size_t width
+					= font_encode(gpu_sync.msg, k - gpu_sync.video_vstart,
+								  obj->ptr[1] + obj->encode_offset);
+
+				line_idx += width;
+				advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
+							  width);
+			}
 
 			while(line_idx < gpu_sync.video_width) {
 				size_t can_take = min_n(gpu_sync.video_width - line_idx,
@@ -451,6 +471,9 @@ void thread2() {
 			advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
 						  FRAME_WIDTH / 2);
 		}
+
+		if(gpu_sync.msg_frames_visible > 0)
+			gpu_sync.msg_frames_visible--;
 
 		if(needs_resync)
 			needs_resync_frames++;
