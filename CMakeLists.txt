@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.13)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 set(CMAKE_C_FLAGS_RELEASE "-Ofast")
+add_compile_definitions(NDEBUG)
+add_link_options(-Wl,--print-memory-usage)
 
 # Pull in SDK (must be before project)
 include(pico_sdk_import.cmake)
