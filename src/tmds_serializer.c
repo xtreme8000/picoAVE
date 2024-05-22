@@ -50,7 +50,7 @@ tmds_serializer_transfer_callback(struct tmds_serializer* s) {
 				s->dma_data[k] = data.source;
 			} else {
 				gpio_set_mask(1 << PICO_DEFAULT_LED_PIN);
-				panic("must not be reached\n");
+				panic_unsupported();
 			}
 
 			return completed;

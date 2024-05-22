@@ -9,20 +9,20 @@ static uint32_t tmds_symbol0[256 * 9];
 static uint32_t tmds_symbol1[256 * 16];
 
 // lsb is send first
-const uint16_t tmds_terc4_symbols[16] = {
+uint16_t tmds_terc4_symbols[16] = {
 	0x29c, 0x263, 0x2e4, 0x2e2, 0x171, 0x11e, 0x18e, 0x13c,
 	0x2cc, 0x139, 0x19c, 0x2c6, 0x28e, 0x271, 0x163, 0x2c3,
 };
 
 // (vsync, hsync)
-const uint32_t tmds_sync_symbols[4] = {
+uint32_t tmds_sync_symbols[4] = {
 	0xd5354,
 	0x2acab,
 	0x55154,
 	0xaaeab,
 };
 
-const uint32_t tmds_symbols_10h[9] = {
+uint32_t tmds_symbols_10h[9] = {
 	/*
 		bias -8, error 8, (18, 18)
 		bias -6, error 13, (18, 19)
@@ -39,7 +39,7 @@ const uint32_t tmds_symbols_10h[9] = {
 	0x7c10e, 0x4390e, 0x4310e, 0x4310c,
 };
 
-const uint32_t tmds_symbols_80h[9] = {
+uint32_t tmds_symbols_80h[9] = {
 	/*
 		bias -8, error 2, (127, 127)
 		bias -6, error 4, (128, 130)
@@ -207,8 +207,10 @@ void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2) {
 	tmds2[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_2;
 }
 
-static uint32_t tmds_encode3_y1y2(const uint32_t* pixbuf, size_t length,
-								  uint32_t bias, uint32_t* tmds) {
+uint32_t tmds_encode_y1y2(const uint32_t* pixbuf, size_t length,
+						  uint32_t* tmds) {
+	uint32_t bias = 0;
+
 	asm volatile("loop%=:\n\t"
 				 "ldmia      %[pixbuf]!,{%%r4,%%r5,%%r6}\n\t"
 
@@ -252,12 +254,14 @@ static uint32_t tmds_encode3_y1y2(const uint32_t* pixbuf, size_t length,
 				 : [interp] "l"((uint32_t)interp0), [end] "h"(pixbuf + length)
 				 : "r4", "r5", "r6", "r7", "cc", "memory");
 
-	return bias;
+	return bias >> 10;
 }
 
 // slower than y1y2
-static uint32_t tmds_encode3_cbcr(const uint32_t* pixbuf, size_t length,
-								  uint32_t bias, uint32_t* tmds) {
+uint32_t tmds_encode_cbcr(const uint32_t* pixbuf, size_t length,
+						  uint32_t* tmds) {
+	uint32_t bias = 0;
+
 	asm volatile("loop%=:\n\t"
 				 "ldmia      %[pixbuf]!,{%%r4,%%r5,%%r6}\n\t"
 
@@ -304,14 +308,5 @@ static uint32_t tmds_encode3_cbcr(const uint32_t* pixbuf, size_t length,
 				 : [interp] "l"((uint32_t)interp1), [end] "h"(pixbuf + length)
 				 : "r4", "r5", "r6", "r7", "cc", "memory");
 
-	return bias;
-}
-
-size_t tmds_encode_video(const uint32_t* pixbuf, bool cbcr, size_t length,
-						 uint32_t* tmds) {
-	if(cbcr) {
-		return tmds_encode3_cbcr(pixbuf, length, 0, tmds) >> 10;
-	} else {
-		return tmds_encode3_y1y2(pixbuf, length, 0, tmds) >> 10;
-	}
+	return bias >> 10;
 }

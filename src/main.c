@@ -33,6 +33,7 @@ queue_t queue_test_audio;
 
 void thread1(void);
 void thread2(void);
+void encode_video_isr(void);
 
 static void* alloc_video() {
 	struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
@@ -66,40 +67,6 @@ static void* alloc_packet() {
 	return obj;
 }
 
-struct audio_packet_encoding {
-	struct tmds_data3* data;
-	size_t index;
-};
-
-static void process_audio(struct audio_packet_encoding* a) {
-	if(!a->data) {
-		if(!queue_try_remove(&queue_test_audio, &a->data))
-			a->data = NULL;
-		a->index = 0;
-	}
-
-	if(a->data) {
-		struct tmds_data3* obj = mem_pool_try_alloc(&pool_packets);
-
-		if(obj) {
-			packets_encode_audio(a->data->audio_data + a->index, a->index,
-								 false, true,
-								 obj->ptr[0] + FRAME_H_PORCH_FRONT / 2,
-								 obj->ptr[1] + FRAME_H_PORCH_FRONT / 2,
-								 obj->ptr[2] + FRAME_H_PORCH_FRONT / 2);
-
-			video_output_submit(obj);
-
-			a->index += 4;
-
-			if(a->index >= a->data->audio_length) {
-				mem_pool_free(&pool_audio, a->data);
-				a->data = NULL;
-			}
-		}
-	}
-}
-
 int main() {
 	// set_sys_clock_pll(336 * 1000 * 1000, 7, 6); // 8 MHz
 	vreg_set_voltage(VREG_VOLTAGE_1_20);
@@ -112,9 +79,6 @@ int main() {
 	// Additonally most interrupt code + data has been moved to scratch memory.
 	bus_ctrl_hw->priority
 		= BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
-
-	// stdio_init_all();
-	// sleep_ms(5000);
 
 	gpio_init(PICO_DEFAULT_LED_PIN);
 	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
@@ -141,28 +105,27 @@ int main() {
 	video_output_init((uint[]) {18, 20, 26}, 16, &pool_video, &pool_packets);
 
 	multicore_launch_core1(thread2);
+
+	irq_set_exclusive_handler(SIO_IRQ_PROC0, encode_video_isr);
+	irq_set_enabled(SIO_IRQ_PROC0, true);
+
 	thread1();
 
 	return 0;
 }
 
-void thread1() {
-	video_output_start();
+static size_t cnt = 0;
 
-	struct audio_packet_encoding audio_encoder = {
-		.data = NULL,
-		.index = 0,
-	};
+void encode_video_isr() {
+	multicore_fifo_drain();
+	multicore_fifo_clear_irq();
 
-	size_t cnt = 0;
-
-	while(1) {
-		struct tmds_data3* obj;
-		queue_remove_blocking(&queue_test, &obj);
+	struct tmds_data3* obj;
+	while(queue_try_remove(&queue_test, &obj)) {
 		if(obj->encode_length > 0) {
-			size_t bias = tmds_encode_video(obj->ptr[1] + obj->encode_offset,
-											false, obj->encode_length,
-											obj->ptr[1] + obj->encode_offset);
+			size_t bias = tmds_encode_y1y2(obj->ptr[1] + obj->encode_offset,
+										   obj->encode_length,
+										   obj->ptr[1] + obj->encode_offset);
 
 			if(obj->encode_offset + obj->encode_length < obj->length)
 				obj->ptr[1][obj->encode_offset + obj->encode_length]
@@ -172,13 +135,6 @@ void thread1() {
 		bool finished = obj->last_line;
 		video_output_submit(obj);
 
-		/*if(finished) {
-			while(queue_is_empty(&queue_test))
-				process_audio(&audio_encoder);
-		} else {
-			process_audio(&audio_encoder);
-		}*/
-
 		if(finished) {
 			cnt++;
 			if(cnt == 15) {
@@ -186,6 +142,28 @@ void thread1() {
 				gpio_xor_mask(1 << PICO_DEFAULT_LED_PIN);
 			}
 		}
+	}
+}
+
+void thread1() {
+	video_output_start();
+
+	while(1) {
+		struct tmds_data3* frame;
+		queue_remove_blocking(&queue_test_audio, &frame);
+
+		for(size_t idx = 0; idx < 192; idx += 4) {
+			struct tmds_data3* obj = mem_pool_alloc(&pool_packets);
+
+			packets_encode_audio(frame->audio_data + idx, idx, false, true,
+								 obj->ptr[0] + FRAME_H_PORCH_FRONT / 2,
+								 obj->ptr[1] + FRAME_H_PORCH_FRONT / 2,
+								 obj->ptr[2] + FRAME_H_PORCH_FRONT / 2);
+
+			video_output_submit(obj);
+		}
+
+		mem_pool_free(&pool_audio, frame);
 	}
 }
 
@@ -384,7 +362,7 @@ void thread2() {
 			obj->encode_length = gpu_sync.video_width_padded;
 
 			bool blanking1 = (gpu_sync.current_data->ptr[gpu_sync.current_idx]
-							 & BLANK_MASK)
+							  & BLANK_MASK)
 				== 0;
 			if(blanking1)
 				needs_resync = true;
@@ -418,15 +396,16 @@ void thread2() {
 			while(line_idx < gpu_sync.video_width_padded)
 				obj->ptr[1][obj->encode_offset + line_idx++] = 0x10801080;
 
-			size_t bias = tmds_encode_video(obj->ptr[1] + obj->encode_offset,
-											true, gpu_sync.video_width_padded,
-											obj->ptr[2] + obj->encode_offset);
+			size_t bias = tmds_encode_cbcr(obj->ptr[1] + obj->encode_offset,
+										   gpu_sync.video_width_padded,
+										   obj->ptr[2] + obj->encode_offset);
 
 			if(obj->encode_offset + gpu_sync.video_width_padded < obj->length)
 				obj->ptr[2][obj->encode_offset + gpu_sync.video_width_padded]
 					= tmds_symbols_80h[bias];
 
 			queue_add_blocking(&queue_test, &obj);
+			multicore_fifo_push_blocking(0);
 
 			bool blanking2 = (gpu_sync.current_data->ptr[gpu_sync.current_idx]
 							  & BLANK_MASK)
@@ -442,6 +421,7 @@ void thread2() {
 			struct tmds_data3* obj
 				= (k == FRAME_VIS_HEIGHT - 1) ? &empty_line_last : &empty_line;
 			queue_add_blocking(&queue_test, &obj);
+			multicore_fifo_push_blocking(0);
 
 			bool blanking = (gpu_sync.current_data->ptr[gpu_sync.current_idx]
 							 & BLANK_MASK)
@@ -467,6 +447,7 @@ void thread2() {
 		for(size_t k = 0; k < gpu_sync.video_vstart; k++) {
 			struct tmds_data3* obj = (k == 0) ? &empty_line_sync : &empty_line;
 			queue_add_blocking(&queue_test, &obj);
+			multicore_fifo_push_blocking(0);
 
 			bool blanking = (gpu_sync.current_data->ptr[gpu_sync.current_idx]
 							 & BLANK_MASK)
