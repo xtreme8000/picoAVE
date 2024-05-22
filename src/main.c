@@ -15,6 +15,7 @@
 #include "mem_pool.h"
 #include "metadata.h"
 #include "packets.h"
+#include "str_builder.h"
 #include "tmds_encode.h"
 #include "utils.h"
 #include "video_output.h"
@@ -331,9 +332,10 @@ void gpu_sync_video(struct gpu_sync_state* state) {
 	state->current_data = current_data;
 	state->current_idx = current_idx;
 
-	snprintf(state->msg, sizeof(state->msg),
-			 "%zux%zup [" PROJECT_NAME " " PROJECT_VERSION "]", video_width * 2,
-			 video_height);
+	str_finish(str_append(
+		str_uint(str_char(str_uint(state->msg, video_width * 2), 'x'),
+				 video_height),
+		"p [" PROJECT_NAME " " PROJECT_VERSION "]"));
 	state->msg_frames_visible = 60 * 10;
 }
 

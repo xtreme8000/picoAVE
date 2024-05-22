@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-set(CMAKE_C_FLAGS_RELEASE "-Ofast")
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)
+set(CMAKE_C_FLAGS_RELEASE "-Os")
 add_compile_definitions(NDEBUG)
 add_link_options(-Wl,--print-memory-usage)
 
@@ -23,6 +23,7 @@ add_executable(picoave
         src/gpu_input.c
         src/mem_pool.c
         src/font.c
+        src/str_builder.c
 )
 
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/clock.pio)
