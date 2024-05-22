@@ -264,8 +264,7 @@ struct gpu_sync_state {
 
 void gpu_sync_video(struct gpu_sync_state* state) {
 	size_t video_objs_length = mem_pool_capacity(&pool_video);
-	struct tmds_data3** video_objs
-		= malloc(sizeof(struct tmds_data3*) * video_objs_length);
+	struct tmds_data3* video_objs[video_objs_length];
 
 	for(size_t k = 0; k < video_objs_length; k++) {
 		video_objs[k] = mem_pool_alloc(&pool_video);
@@ -276,8 +275,6 @@ void gpu_sync_video(struct gpu_sync_state* state) {
 
 	for(size_t k = 0; k < video_objs_length; k++)
 		mem_pool_free(&pool_video, video_objs[k]);
-
-	free(video_objs);
 
 	size_t current_idx, video_width;
 	struct gpu_data* current_data;
