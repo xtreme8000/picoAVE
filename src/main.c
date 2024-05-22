@@ -383,10 +383,10 @@ void thread2() {
 				= FRAME_BUFFER_OFFSET / 2 + gpu_sync.video_xstart;
 			obj->encode_length = gpu_sync.video_width_padded;
 
-			bool blanking = (gpu_sync.current_data->ptr[gpu_sync.current_idx]
+			bool blanking1 = (gpu_sync.current_data->ptr[gpu_sync.current_idx]
 							 & BLANK_MASK)
 				== 0;
-			if(blanking)
+			if(blanking1)
 				needs_resync = true;
 
 			size_t line_idx = 0;
@@ -427,6 +427,13 @@ void thread2() {
 					= tmds_symbols_80h[bias];
 
 			queue_add_blocking(&queue_test, &obj);
+
+			bool blanking2 = (gpu_sync.current_data->ptr[gpu_sync.current_idx]
+							  & BLANK_MASK)
+				== 0;
+			if(!blanking2)
+				needs_resync = true;
+
 			advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
 						  FRAME_WIDTH / 2 - gpu_sync.video_width);
 		}
