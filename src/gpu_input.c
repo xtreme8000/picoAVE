@@ -32,7 +32,7 @@ struct gpu_input {
 	} video;
 	struct {
 		uint dma_channels[2];
-		struct tmds_data3* dma_data[2];
+		struct audio_data* dma_data[2];
 		struct mem_pool* pool_audio;
 		queue_t* queue_receive;
 		uint pio_sm;
@@ -49,9 +49,8 @@ static void CORE1_CODE dma_channel_set_write_incr(uint channel, bool incr) {
 }
 
 static void CORE1_CODE dma_isr1(void) {
-	// video
-
 	for(size_t k = 0; k < 2; k++) {
+		// video
 		if(dma_channel_get_irq1_status(gi.video.dma_channels[k])) {
 			dma_channel_acknowledge_irq1(gi.video.dma_channels[k]);
 
@@ -79,11 +78,8 @@ static void CORE1_CODE dma_isr1(void) {
 											DUMMY_BUFFER_LENGTH, false);
 			}
 		}
-	}
 
-	// audio
-
-	for(size_t k = 0; k < 2; k++) {
+		// audio
 		if(dma_channel_get_irq1_status(gi.audio.dma_channels[k])) {
 			dma_channel_acknowledge_irq1(gi.audio.dma_channels[k]);
 
@@ -99,8 +95,7 @@ static void CORE1_CODE dma_isr1(void) {
 										   gi.audio.dma_data[k]->audio_data,
 										   false);
 				dma_channel_set_trans_count(gi.audio.dma_channels[k],
-											gi.audio.dma_data[k]->audio_length,
-											false);
+											AUDIO_FRAME_LENGTH, false);
 			} else {
 				dma_channel_set_write_incr(gi.audio.dma_channels[k], false);
 				dma_channel_set_write_addr(gi.audio.dma_channels[k],
@@ -181,10 +176,10 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 
 	dma_gpu_configure(gi.audio.dma_channels[0], gi.audio.dma_channels[1],
 					  gi.audio.pio_sm, gi.audio.dma_data[0]->audio_data,
-					  gi.audio.dma_data[0]->audio_length);
+					  AUDIO_FRAME_LENGTH);
 	dma_gpu_configure(gi.audio.dma_channels[1], gi.audio.dma_channels[0],
 					  gi.audio.pio_sm, gi.audio.dma_data[1]->audio_data,
-					  gi.audio.dma_data[1]->audio_length);
+					  AUDIO_FRAME_LENGTH);
 
 	// general
 

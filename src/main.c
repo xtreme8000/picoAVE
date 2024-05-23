@@ -48,10 +48,7 @@ static void* alloc_video() {
 }
 
 static void* alloc_audio() {
-	struct tmds_data3* obj = malloc(sizeof(struct tmds_data3));
-	obj->audio_length = 192;
-	obj->audio_data = malloc(obj->audio_length * sizeof(uint32_t));
-	return obj;
+	return malloc(sizeof(struct audio_data));
 }
 
 static void* alloc_packet() {
@@ -96,7 +93,7 @@ int main() {
 	mem_pool_create(&pool_packets, alloc_packet, 16);
 	queue_init(&queue_test, sizeof(struct tmds_data3*),
 			   mem_pool_capacity(&pool_video));
-	queue_init(&queue_test_audio, sizeof(struct tmds_data3*),
+	queue_init(&queue_test_audio, sizeof(struct audio_data*),
 			   mem_pool_capacity(&pool_audio));
 
 	tmds_encode_init();
@@ -149,10 +146,10 @@ void thread1() {
 	video_output_start();
 
 	while(1) {
-		struct tmds_data3* frame;
+		struct audio_data* frame;
 		queue_remove_blocking(&queue_test_audio, &frame);
 
-		for(size_t idx = 0; idx < 192; idx += 4) {
+		for(size_t idx = 0; idx < AUDIO_FRAME_LENGTH; idx += 4) {
 			struct tmds_data3* obj = mem_pool_alloc(&pool_packets);
 
 			packets_encode_audio(frame->audio_data + idx, idx, false, true,
