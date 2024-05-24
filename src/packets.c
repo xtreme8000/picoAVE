@@ -12,8 +12,8 @@
 
 static uint32_t CORE0_DATA tmds_terc4_symbols2[256];
 static uint8_t CORE0_DATA bch_lookup[256];
-static uint32_t CORE0_DATA sub_lookup[256];
-static uint8_t parity_lookup[256];
+static uint32_t sub_lookup[256];
+static uint8_t CORE0_DATA parity_lookup[256];
 static uint32_t header_lookup[256];
 
 static uint8_t bch_gen(uint8_t in) {

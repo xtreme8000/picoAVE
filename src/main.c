@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -88,9 +87,9 @@ int main() {
 
 	tmds_encode_sync_video(tmds_image_00h, tmds_image_10h, tmds_image_80h);
 
-	mem_pool_create(&pool_video, alloc_video, 16);
-	mem_pool_create(&pool_audio, alloc_audio, 8);
-	mem_pool_create(&pool_packets, alloc_packet, 16);
+	mem_pool_create(&pool_video, alloc_video, 16, NULL);
+	mem_pool_create(&pool_audio, alloc_audio, 8, NULL);
+	mem_pool_create(&pool_packets, alloc_packet, 16, NULL);
 	queue_init(&queue_test, sizeof(struct tmds_data3*),
 			   mem_pool_capacity(&pool_video));
 	queue_init(&queue_test_audio, sizeof(struct audio_data*),
@@ -113,7 +112,7 @@ int main() {
 
 static size_t cnt = 0;
 
-void encode_video_isr() {
+void CORE0_CODE encode_video_isr() {
 	multicore_fifo_drain();
 	multicore_fifo_clear_irq();
 
@@ -142,7 +141,7 @@ void encode_video_isr() {
 	}
 }
 
-void thread1() {
+void CORE0_CODE thread1() {
 	video_output_start();
 
 	while(1) {
@@ -166,17 +165,26 @@ void thread1() {
 
 #define BLANK_MASK 0xF000F000 // check any Y >= 16
 
-void advance_input(size_t* idx, struct gpu_data** data, size_t amount) {
+bool CORE1_CODE advance_input(size_t* idx, struct gpu_data** data,
+							  size_t amount) {
 	*idx += amount;
 
 	while(*idx >= (*data)->length) {
 		*idx -= (*data)->length;
 		gpu_input_release(*data);
-		*data = gpu_input_receive();
+
+		struct gpu_data* res = gpu_input_receive();
+		*data = res;
+
+		if(res->data_skipped)
+			return false;
 	}
+
+	return true;
 }
 
-bool find_image_start(struct gpu_data** data, size_t* start, size_t* width) {
+bool CORE1_CODE find_image_start(struct gpu_data** data, size_t* start,
+								 size_t* width) {
 	struct gpu_data* current_data = gpu_input_receive();
 
 	size_t video_start, video_end;
@@ -238,7 +246,7 @@ struct gpu_sync_state {
 	int msg_frames_visible;
 };
 
-void gpu_sync_video(struct gpu_sync_state* state) {
+bool CORE1_CODE gpu_sync_video(struct gpu_sync_state* state) {
 	size_t video_objs_length = mem_pool_capacity(&pool_video);
 	struct tmds_data3* video_objs[video_objs_length];
 
@@ -261,14 +269,9 @@ void gpu_sync_video(struct gpu_sync_state* state) {
 			break;
 	}
 
-	static_assert(FRAME_VIS_WIDTH / 2 % 3 == 0);
-	size_t video_width_padded = (video_width + 2) / 3 * 3;
-	size_t video_xstart = (FRAME_VIS_WIDTH / 2 - video_width) / 2;
-
-	if(video_xstart + video_width_padded > FRAME_VIS_WIDTH / 2)
-		video_xstart = 0;
-
+	bool success = true;
 	bool prev_blank = false;
+	size_t loop_counter = 0;
 
 	while(1) {
 		bool blanking = (current_data->ptr[current_idx] & BLANK_MASK) == 0;
@@ -277,25 +280,43 @@ void gpu_sync_video(struct gpu_sync_state* state) {
 			break;
 
 		prev_blank = blanking;
-		advance_input(&current_idx, &current_data, FRAME_WIDTH / 2);
+
+		if(!advance_input(&current_idx, &current_data, FRAME_WIDTH / 2)
+		   || loop_counter >= FRAME_HEIGHT * 4) {
+			success = false;
+			break;
+		}
+
+		loop_counter++;
 	}
 
 	size_t video_height = 0;
 
-	while(1) {
+	while(video_height < FRAME_VIS_HEIGHT) {
 		bool blanking = (current_data->ptr[current_idx] & BLANK_MASK) == 0;
 
 		if(blanking)
 			break;
 
-		advance_input(&current_idx, &current_data, FRAME_WIDTH / 2);
+		if(!advance_input(&current_idx, &current_data, FRAME_WIDTH / 2)) {
+			success = false;
+			break;
+		}
+
 		video_height++;
 	}
 
-	advance_input(&current_idx, &current_data,
-				  (FRAME_HEIGHT - video_height) * FRAME_WIDTH / 2);
+	if(!advance_input(&current_idx, &current_data,
+					  (FRAME_HEIGHT - video_height) * FRAME_WIDTH / 2))
+		success = false;
 
-	video_height = min_n(video_height, FRAME_VIS_HEIGHT);
+	static_assert(FRAME_VIS_WIDTH / 2 % 3 == 0);
+	size_t video_width_padded = (video_width + 2) / 3 * 3;
+	size_t video_xstart = (FRAME_VIS_WIDTH / 2 - video_width) / 2;
+
+	if(video_xstart + video_width_padded > FRAME_VIS_WIDTH / 2)
+		video_xstart = 0;
+
 	size_t video_vstart = (FRAME_VIS_HEIGHT - video_height) / 2;
 	size_t video_vend = video_height + video_vstart;
 
@@ -312,13 +333,15 @@ void gpu_sync_video(struct gpu_sync_state* state) {
 				 video_height),
 		"p [" PROJECT_NAME " " PROJECT_VERSION "]"));
 	state->msg_frames_visible = 60 * 10;
+
+	return success;
 }
 
 struct tmds_data3 empty_line;
 struct tmds_data3 empty_line_sync;
 struct tmds_data3 empty_line_last;
 
-void thread2() {
+void CORE1_CODE thread2() {
 	empty_line = empty_line_sync = empty_line_last = (struct tmds_data3) {
 		.type = TYPE_CONST,
 		.encode_length = 0,
@@ -338,14 +361,15 @@ void thread2() {
 	tmds_encode_setup();
 
 	// TODO: only 32 because of an overflow during following sync scan
-	gpu_input_init(16, FRAME_WIDTH / 2 * 4, 2, &pool_audio, &queue_test_audio,
+	gpu_input_init(15, FRAME_WIDTH / 2 * 4, 2, &pool_audio, &queue_test_audio,
 				   12, 11);
 	gpu_input_start();
 
 	struct gpu_sync_state gpu_sync;
 	int needs_resync_frames = 0;
 
-	gpu_sync_video(&gpu_sync);
+	while(!gpu_sync_video(&gpu_sync))
+		tight_loop_contents();
 
 	while(1) {
 		bool needs_resync = false;
@@ -373,8 +397,9 @@ void thread2() {
 								  obj->ptr[1] + obj->encode_offset);
 
 				line_idx += width;
-				advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
-							  width);
+				if(!advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
+								  width))
+					needs_resync = true;
 			}
 
 			while(line_idx < gpu_sync.video_width) {
@@ -386,8 +411,9 @@ void thread2() {
 					   can_take * sizeof(uint32_t));
 
 				line_idx += can_take;
-				advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
-							  can_take);
+				if(!advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
+								  can_take))
+					needs_resync = true;
 			}
 
 			while(line_idx < gpu_sync.video_width_padded)
@@ -410,8 +436,9 @@ void thread2() {
 			if(!blanking2)
 				needs_resync = true;
 
-			advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
-						  FRAME_WIDTH / 2 - gpu_sync.video_width);
+			if(!advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
+							  FRAME_WIDTH / 2 - gpu_sync.video_width))
+				needs_resync = true;
 		}
 
 		for(size_t k = gpu_sync.video_vend; k < FRAME_VIS_HEIGHT; k++) {
@@ -426,8 +453,9 @@ void thread2() {
 			if(!blanking)
 				needs_resync = true;
 
-			advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
-						  FRAME_WIDTH / 2);
+			if(!advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
+							  FRAME_WIDTH / 2))
+				needs_resync = true;
 		}
 
 		for(size_t k = 0; k < FRAME_V_BLANK; k++) {
@@ -437,8 +465,9 @@ void thread2() {
 			if(!blanking)
 				needs_resync = true;
 
-			advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
-						  FRAME_WIDTH / 2);
+			if(!advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
+							  FRAME_WIDTH / 2))
+				needs_resync = true;
 		}
 
 		for(size_t k = 0; k < gpu_sync.video_vstart; k++) {
@@ -452,8 +481,9 @@ void thread2() {
 			if(!blanking)
 				needs_resync = true;
 
-			advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
-						  FRAME_WIDTH / 2);
+			if(!advance_input(&gpu_sync.current_idx, &gpu_sync.current_data,
+							  FRAME_WIDTH / 2))
+				needs_resync = true;
 		}
 
 		if(gpu_sync.msg_frames_visible > 0)
@@ -465,7 +495,9 @@ void thread2() {
 		if(needs_resync_frames >= 60) {
 			needs_resync_frames = 0;
 			gpu_input_release(gpu_sync.current_data);
-			gpu_sync_video(&gpu_sync);
+
+			while(!gpu_sync_video(&gpu_sync))
+				tight_loop_contents();
 		}
 	}
 }

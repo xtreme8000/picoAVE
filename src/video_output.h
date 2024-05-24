@@ -13,18 +13,10 @@ struct tmds_data3 {
 		TYPE_VIDEO,
 		TYPE_PACKET,
 	} type;
-	union {
-		struct {
-			uint32_t* audio_data;
-			size_t audio_length;
-		};
-		struct {
 			bool vsync;
 			bool last_line;
 			size_t encode_offset;
 			size_t encode_length;
-		};
-	};
 	size_t length;
 	uint32_t* ptr[TMDS_CHANNEL_COUNT];
 	size_t transfers;

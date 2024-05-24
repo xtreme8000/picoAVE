@@ -1,12 +1,11 @@
 #ifndef GPU_INPUT_H
 #define GPU_INPUT_H
 
-#include "ffifo.h"
 #include "mem_pool.h"
 #include "pico/platform.h"
 
 struct gpu_data {
-	size_t data_skipped;
+	bool data_skipped;
 	size_t length;
 	uint32_t* ptr;
 };

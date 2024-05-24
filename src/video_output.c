@@ -118,9 +118,9 @@ static struct tmds_data3* CORE0_CODE build_video_signal(void) {
 
 	if(!result) {
 		// last resort, provide anything to keep serializers in sync
-		gpio_set_mask(1 << PICO_DEFAULT_LED_PIN);
 		result = video_signal_parts + 0;
 		vdo.state.y++;
+		vdo.state.active = false;
 		vdo.state.packet_rate_limit = 0;
 	}
 

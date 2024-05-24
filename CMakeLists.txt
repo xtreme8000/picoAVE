@@ -64,4 +64,4 @@ pico_add_extra_outputs(picoave)
 pico_enable_stdio_usb(picoave 0)
 pico_enable_stdio_uart(picoave 0)
 
-pico_set_binary_type(picoave default)
+pico_set_binary_type(picoave copy_to_ram)

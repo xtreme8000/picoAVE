@@ -14,8 +14,6 @@
 #include "utils.h"
 #include "video_output.h"
 
-FIFO_DEF(fifo_gpu, struct gpu_data*)
-
 #define DUMMY_BUFFER_LENGTH 256
 static uint32_t dummy_buffer;
 
@@ -25,8 +23,8 @@ struct gpu_input {
 		size_t data_skipped;
 		uint dma_channels[2];
 		struct gpu_data* dma_data[2];
-		struct fifo_gpu queue_unused;
-		struct fifo_gpu queue_receive;
+		struct mem_pool pool;
+		queue_t queue_receive;
 		uint pio_sm;
 		uint pio_program_offset;
 	} video;
@@ -55,13 +53,14 @@ static void CORE1_CODE dma_isr1(void) {
 			dma_channel_acknowledge_irq1(gi.video.dma_channels[k]);
 
 			if(likely(gi.video.dma_data[k]))
-				fifo_gpu_push(&gi.video.queue_receive, gi.video.dma_data + k);
+				queue_try_add(&gi.video.queue_receive, gi.video.dma_data + k);
 
-			if(likely(gi.running
-					  && fifo_gpu_pop(&gi.video.queue_unused,
-									  gi.video.dma_data + k))) {
+			gi.video.dma_data[k]
+				= gi.running ? mem_pool_try_alloc(&gi.video.pool) : NULL;
+
+			if(likely(gi.video.dma_data[k])) {
 				gi.video.dma_data[k]->data_skipped = gi.video.data_skipped;
-				gi.video.data_skipped = 0;
+				gi.video.data_skipped = false;
 				dma_channel_set_write_incr(gi.video.dma_channels[k], true);
 				dma_channel_set_write_addr(gi.video.dma_channels[k],
 										   gi.video.dma_data[k]->ptr, false);
@@ -69,8 +68,7 @@ static void CORE1_CODE dma_isr1(void) {
 											gi.video.dma_data[k]->length,
 											false);
 			} else {
-				gi.video.dma_data[k] = NULL;
-				gi.video.data_skipped += DUMMY_BUFFER_LENGTH;
+				gi.video.data_skipped = true;
 				dma_channel_set_write_incr(gi.video.dma_channels[k], false);
 				dma_channel_set_write_addr(gi.video.dma_channels[k],
 										   &dummy_buffer, false);
@@ -121,6 +119,14 @@ static void dma_gpu_configure(uint channel, uint other_channel, uint sm,
 	dma_channel_set_irq1_enabled(channel, true);
 }
 
+static void* alloc_gpu_data(void* user) {
+	size_t buffer_length = *(size_t*)user;
+	struct gpu_data* obj = malloc(sizeof(struct gpu_data));
+	obj->length = buffer_length;
+	obj->ptr = malloc(buffer_length * sizeof(uint32_t));
+	return obj;
+}
+
 void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 					struct mem_pool* pool_audio, queue_t* receive_queue_audio,
 					uint audio_base, uint audio_ws) {
@@ -132,15 +138,8 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 
 	gi.video.data_skipped = 0;
 
-	fifo_gpu_init(&gi.video.queue_unused, capacity);
-	fifo_gpu_init(&gi.video.queue_receive, capacity);
-
-	while(!fifo_gpu_full(&gi.video.queue_unused)) {
-		struct gpu_data* obj = malloc(sizeof(struct gpu_data));
-		obj->length = buffer_length;
-		obj->ptr = malloc(buffer_length * sizeof(uint32_t));
-		fifo_gpu_push(&gi.video.queue_unused, &obj);
-	}
+	mem_pool_create(&gi.video.pool, alloc_gpu_data, capacity, &buffer_length);
+	queue_init(&gi.video.queue_receive, sizeof(struct gpu_data*), capacity);
 
 	gi.video.pio_sm = pio_claim_unused_sm(pio1, true);
 	gi.video.pio_program_offset = pio_add_program(pio1, &pio_capture_program);
@@ -149,7 +148,7 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 
 	for(size_t k = 0; k < 2; k++) {
 		gi.video.dma_channels[k] = dma_claim_unused_channel(true);
-		fifo_gpu_pop(&gi.video.queue_unused, gi.video.dma_data + k);
+		gi.video.dma_data[k] = mem_pool_alloc(&gi.video.pool);
 	}
 
 	dma_gpu_configure(gi.video.dma_channels[0], gi.video.dma_channels[1],
@@ -218,18 +217,18 @@ void gpu_input_start() {
 
 struct gpu_data* gpu_input_receive() {
 	struct gpu_data* d;
-	fifo_gpu_pop_blocking(&gi.video.queue_receive, &d);
+	queue_remove_blocking(&gi.video.queue_receive, &d);
 	return d;
 }
 
 void gpu_input_release(struct gpu_data* d) {
-	fifo_gpu_push_blocking(&gi.video.queue_unused, &d);
+	mem_pool_free(&gi.video.pool, d);
 }
 
 void gpu_input_drain() {
 	gi.running = false;
 
-	while(!fifo_gpu_full(&gi.video.queue_unused))
+	while(mem_pool_any_allocated(&gi.video.pool))
 		gpu_input_release(gpu_input_receive());
 
 	pio_sm_set_enabled(pio1, gi.video.pio_sm, false);

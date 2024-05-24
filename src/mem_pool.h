@@ -17,9 +17,10 @@ struct mem_pool {
  * @param pool memory pool object
  * @param create_obj function called to initialize every object
  * @param capacity number of object to allocate
+ * @param user optional pointer passed to \p create_obj
  */
-void mem_pool_create(struct mem_pool* pool, void* (*create_obj)(void),
-					 size_t capacity);
+void mem_pool_create(struct mem_pool* pool, void* (*create_obj)(void*),
+					 size_t capacity, void* user);
 
 /**
  * Allocates an object or returns `NULL` if none is available at this moment.
@@ -52,5 +53,13 @@ void mem_pool_free(struct mem_pool* pool, void* obj);
  * @return capacity of the memory pool
  */
 size_t mem_pool_capacity(struct mem_pool* pool);
+
+/**
+ * Determines whether the pool has any allocated objects.
+ *
+ * @param pool memory pool object
+ * @return whether the pool has any allocated objects
+ */
+bool mem_pool_any_allocated(struct mem_pool* pool);
 
 #endif
