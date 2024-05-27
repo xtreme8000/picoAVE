@@ -3,14 +3,32 @@
 .wrap_target
     // exactly 5 (interlaced: 10) cycles for each byte (270MHz / 54MHz)
     // using csel as a clock
-
-    wait 0 pin 8        // wait for rising edge
-    wait 1 pin 8
+ 
+    wait 1 pin 8        // wait for rising edge
 
     in pins, 8 [4]      // y1
-    in pins, 8 [4]      // cb
+    in pins, 8          // cb
+
+    wait 0 pin 8        // wait for falling edge
+
     in pins, 8 [4]      // y2
     in pins, 8          // cr
+.wrap
+
+.program pio_capture_shifted
+
+.wrap_target     
+    wait 0 pin 8        // wait for falling edge
+
+    in pins, 8 [4]      // y1
+    mov x, pins         // cr
+
+    wait 1 pin 8        // wait for rising edge
+
+    mov y, pins [4]     // y2
+    in pins, 8          // cb
+    in y, 8
+    in x, 8
 .wrap
 
 % c-sdk {

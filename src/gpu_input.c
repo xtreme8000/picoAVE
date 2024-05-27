@@ -28,7 +28,7 @@ struct gpu_input {
 		struct mem_pool pool;
 		queue_t queue_receive;
 		uint pio_sm;
-		uint pio_program_offset;
+		uint pio_program_offset[2];
 	} video;
 	struct {
 		uint dma_channels[2];
@@ -164,9 +164,12 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 	queue_init(&gi.video.queue_receive, sizeof(struct gpu_data*), capacity);
 
 	gi.video.pio_sm = pio_claim_unused_sm(pio1, true);
-	gi.video.pio_program_offset = pio_add_program(pio1, &pio_capture_program);
-	pio_capture_program_init(pio1, gi.video.pio_sm, gi.video.pio_program_offset,
-							 video_base);
+	gi.video.pio_program_offset[0]
+		= pio_add_program(pio1, &pio_capture_program);
+	gi.video.pio_program_offset[1]
+		= pio_add_program(pio1, &pio_capture_shifted_program);
+	pio_capture_program_init(pio1, gi.video.pio_sm,
+							 gi.video.pio_program_offset[0], video_base);
 
 	for(size_t k = 0; k < 2; k++) {
 		gi.video.dma_channels[k] = dma_claim_unused_channel(true);
@@ -220,7 +223,7 @@ void gpu_input_start() {
 	pio_sm_clear_fifos(pio1, gi.video.pio_sm);
 	pio_sm_restart(pio1, gi.video.pio_sm);
 	pio_sm_exec(pio1, gi.video.pio_sm,
-				pio_encode_jmp(gi.video.pio_program_offset));
+				pio_encode_jmp(gi.video.pio_program_offset[0]));
 
 	dma_channel_start(gi.video.dma_channels[0]);
 	pio_sm_set_enabled(pio1, gi.video.pio_sm, true);
@@ -248,7 +251,7 @@ void gpu_input_release(struct gpu_data* d) {
 	mem_pool_free(&gi.video.pool, d);
 }
 
-void gpu_input_drain() {
+void gpu_input_drain(bool shifted) {
 	gi.running = false;
 
 	while(mem_pool_any_allocated(&gi.video.pool))
@@ -257,10 +260,22 @@ void gpu_input_drain() {
 	pio_sm_set_enabled(pio1, gi.video.pio_sm, false);
 	pio_sm_clear_fifos(pio1, gi.video.pio_sm);
 
+	if(shifted) {
+		pio_sm_set_wrap(
+			pio1, gi.video.pio_sm,
+			gi.video.pio_program_offset[1] + pio_capture_shifted_wrap_target,
+			gi.video.pio_program_offset[1] + pio_capture_shifted_wrap);
+	} else {
+		pio_sm_set_wrap(pio1, gi.video.pio_sm,
+						gi.video.pio_program_offset[0]
+							+ pio_capture_wrap_target,
+						gi.video.pio_program_offset[0] + pio_capture_wrap);
+	}
+
 	gi.video.data_skipped = 0;
 	gi.running = true;
 	pio_sm_restart(pio1, gi.video.pio_sm);
 	pio_sm_exec(pio1, gi.video.pio_sm,
-				pio_encode_jmp(gi.video.pio_program_offset));
+				pio_encode_jmp(gi.video.pio_program_offset[shifted ? 1 : 0]));
 	pio_sm_set_enabled(pio1, gi.video.pio_sm, true);
 }

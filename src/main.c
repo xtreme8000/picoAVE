@@ -266,11 +266,22 @@ bool CORE1_CODE gpu_sync_video(struct gpu_sync_state* state) {
 
 	size_t current_idx, video_width;
 	struct gpu_data* current_data;
+	bool shifted = false;
 	while(1) {
-		gpu_input_drain();
+		gpu_input_drain(shifted);
 
-		if(find_image_start(&current_data, &current_idx, &video_width))
-			break;
+		if(find_image_start(&current_data, &current_idx, &video_width)) {
+			uint32_t pixels = current_data->ptr[current_idx];
+			bool blanking0 = ((pixels >> 24) & 0xF0) == 0;
+			bool blanking1 = ((pixels >> 8) & 0xF0) == 0;
+
+			if(!blanking0 && !blanking1) {
+				break;
+			} else {
+				shifted = !shifted;
+				gpu_input_release(current_data);
+			}
+		}
 	}
 
 	bool success = true;
