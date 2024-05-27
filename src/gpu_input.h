@@ -13,6 +13,7 @@ struct gpu_data {
 #define AUDIO_FRAME_LENGTH 192
 
 struct audio_data {
+	uint32_t samplerate;
 	uint32_t audio_data[AUDIO_FRAME_LENGTH];
 };
 

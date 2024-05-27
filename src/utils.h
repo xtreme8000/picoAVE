@@ -22,4 +22,12 @@ static inline size_t min_n(size_t a, size_t b) {
 	return a < b ? a : b;
 }
 
+static inline size_t max_n(size_t a, size_t b) {
+	return a > b ? a : b;
+}
+
+static inline size_t clamp_n(size_t x, size_t min, size_t max) {
+	return min_n(max_n(x, min), max);
+}
+
 #endif

@@ -17,10 +17,12 @@
 #define DUMMY_BUFFER_LENGTH 256
 static uint32_t dummy_buffer;
 
+#define TS_HISTORY_LENGTH 4
+
 struct gpu_input {
 	bool running;
 	struct {
-		size_t data_skipped;
+		bool data_skipped;
 		uint dma_channels[2];
 		struct gpu_data* dma_data[2];
 		struct mem_pool pool;
@@ -35,6 +37,8 @@ struct gpu_input {
 		queue_t* queue_receive;
 		uint pio_sm;
 		uint pio_program_offset;
+		uint64_t timestamps[TS_HISTORY_LENGTH];
+		size_t timestamps_count;
 	} audio;
 };
 
@@ -81,9 +85,28 @@ static void CORE1_CODE dma_isr1(void) {
 		if(dma_channel_get_irq1_status(gi.audio.dma_channels[k])) {
 			dma_channel_acknowledge_irq1(gi.audio.dma_channels[k]);
 
-			if(likely(gi.audio.dma_data[k]))
-				queue_add_blocking(gi.audio.queue_receive,
-								   gi.audio.dma_data + k);
+			uint64_t now = time_us_64();
+			uint32_t samplerate = 0;
+
+			if(gi.audio.timestamps_count >= TS_HISTORY_LENGTH) {
+				uint64_t time_diff = now - gi.audio.timestamps[0];
+				samplerate = (uint32_t)(AUDIO_FRAME_LENGTH * 1000 * 1000
+											* TS_HISTORY_LENGTH
+										+ (uint32_t)time_diff / 2)
+					/ (uint32_t)time_diff;
+			} else {
+				gi.audio.timestamps_count++;
+			}
+
+			for(size_t i = 0; i < TS_HISTORY_LENGTH - 1; i++)
+				gi.audio.timestamps[i] = gi.audio.timestamps[i + 1];
+
+			gi.audio.timestamps[TS_HISTORY_LENGTH - 1] = now;
+
+			if(likely(gi.audio.dma_data[k])) {
+				gi.audio.dma_data[k]->samplerate = samplerate;
+				queue_try_add(gi.audio.queue_receive, gi.audio.dma_data + k);
+			}
 
 			gi.audio.dma_data[k] = mem_pool_try_alloc(gi.audio.pool_audio);
 
@@ -92,15 +115,14 @@ static void CORE1_CODE dma_isr1(void) {
 				dma_channel_set_write_addr(gi.audio.dma_channels[k],
 										   gi.audio.dma_data[k]->audio_data,
 										   false);
-				dma_channel_set_trans_count(gi.audio.dma_channels[k],
-											AUDIO_FRAME_LENGTH, false);
 			} else {
 				dma_channel_set_write_incr(gi.audio.dma_channels[k], false);
 				dma_channel_set_write_addr(gi.audio.dma_channels[k],
 										   &dummy_buffer, false);
-				dma_channel_set_trans_count(gi.audio.dma_channels[k],
-											DUMMY_BUFFER_LENGTH, false);
 			}
+
+			dma_channel_set_trans_count(gi.audio.dma_channels[k],
+										AUDIO_FRAME_LENGTH, false);
 		}
 	}
 }
@@ -136,7 +158,7 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 
 	// video
 
-	gi.video.data_skipped = 0;
+	gi.video.data_skipped = false;
 
 	mem_pool_create(&gi.video.pool, alloc_gpu_data, capacity, &buffer_length);
 	queue_init(&gi.video.queue_receive, sizeof(struct gpu_data*), capacity);
@@ -160,6 +182,7 @@ void gpu_input_init(size_t capacity, size_t buffer_length, uint video_base,
 
 	// audio
 
+	gi.audio.timestamps_count = 0;
 	gi.audio.pool_audio = pool_audio;
 	gi.audio.queue_receive = receive_queue_audio;
 

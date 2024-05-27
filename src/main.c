@@ -159,7 +159,11 @@ void CORE0_CODE thread1() {
 			video_output_submit(obj);
 		}
 
+		uint32_t samplerate = frame->samplerate;
 		mem_pool_free(&pool_audio, frame);
+
+		if(samplerate > 0)
+			video_output_set_audio_info(samplerate);
 	}
 }
 

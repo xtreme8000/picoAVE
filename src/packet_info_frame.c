@@ -49,7 +49,7 @@ void packet_spd_info(struct packet* p, const char* vendor,
 	apply_checksum(p);
 }
 
-void packet_audio_info(struct packet* p) {
+void packet_audio_info(struct packet* p, size_t samplerate) {
 	memset(p->header, 0, sizeof(p->header));
 	memset(p->data, 0, sizeof(p->data));
 
@@ -58,7 +58,7 @@ void packet_audio_info(struct packet* p) {
 	p->header[2] = 10;
 
 	p->data[1] = 1 | (1 << 4);
-	p->data[2] = 1 | (3 << 2);
+	p->data[2] = 1 | (samplerate << 2);
 	p->data[4] = 0;
 	p->data[5] = (0 << 3) | (0 << 7);
 
