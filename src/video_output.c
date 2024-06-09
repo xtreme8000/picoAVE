@@ -11,8 +11,7 @@
 
 FIFO_DEF(fifo_image, struct tmds_data3*)
 
-#define RATE_THRESHOLD (FRAME_HEIGHT * 60 * 4 * 4096)
-#define RATE_INCREASE(clk) ((clk) * 4096)
+#define RATE_THRESHOLD (FRAME_HEIGHT * 60 * 4)
 
 struct video_output {
 	struct tmds_clock channel_clock;
@@ -307,5 +306,5 @@ void video_output_set_audio_info(uint32_t samplerate) {
 					   + (FRAME_H_PORCH_FRONT + FRAME_H_SYNC) / 2);
 
 	vdo.audio_info_idx = other_packet;
-	vdo.state.rate_increase = RATE_INCREASE(sr_clamped);
+	vdo.state.rate_increase = sr_clamped;
 }
