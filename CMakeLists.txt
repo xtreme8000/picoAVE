@@ -1,16 +1,36 @@
 cmake_minimum_required(VERSION 3.13)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)
 set(CMAKE_C_FLAGS_RELEASE "-Os")
-add_compile_definitions(NDEBUG)
+add_compile_definitions(
+        NDEBUG
+
+# boot rp2040 at 48MHz, later overclocked in main()
+        SYS_CLK_KHZ=48000
+        XOSC_KHZ=54000
+
+        PLL_COMMON_REFDIV=1
+
+        PLL_SYS_VCO_FREQ_KHZ=864000
+        PLL_SYS_POSTDIV1=6
+        PLL_SYS_POSTDIV2=3
+
+        PLL_USB_VCO_FREQ_KHZ=864000
+        PLL_USB_POSTDIV1=6
+        PLL_USB_POSTDIV2=3
+)
 add_link_options(-Wl,--print-memory-usage)
 
 # Pull in SDK (must be before project)
+set(SKIP_HARDWARE_XOSC 1)
 include(pico_sdk_import.cmake)
 
 project(picoave C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 
 pico_sdk_init()
+
+unset(SKIP_HARDWARE_XOSC)
+pico_add_subdirectory(hardware_xosc)
 
 add_executable(picoave
         src/main.c

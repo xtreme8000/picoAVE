@@ -8,11 +8,11 @@
 #include "pico/stdlib.h"
 #include "pico/util/queue.h"
 
+#include "config.h"
 #include "font.h"
 #include "frame.h"
 #include "gpu_input.h"
 #include "mem_pool.h"
-#include "metadata.h"
 #include "packets.h"
 #include "str_builder.h"
 #include "tmds_encode.h"
@@ -76,8 +76,12 @@ int main() {
 	bus_ctrl_hw->priority
 		= BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
 
-	gpio_init(PICO_DEFAULT_LED_PIN);
-	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+	gpio_init(BOARD_LED0);
+	gpio_set_dir(BOARD_LED0, GPIO_OUT);
+
+	gpio_init(BOARD_LED1);
+	gpio_set_dir(BOARD_LED1, GPIO_OUT);
+	gpio_set_mask(1 << BOARD_LED1);
 
 	for(size_t k = 0; k < FRAME_BUFFER_WIDTH / 2; k++) {
 		tmds_image_00h[k] = 0xffd00;
@@ -98,7 +102,8 @@ int main() {
 	tmds_encode_init();
 	tmds_encode_setup();
 	packets_init();
-	video_output_init((uint[]) {18, 20, 26}, 16, &pool_video, &pool_packets);
+	video_output_init((uint[]) {BOARD_TMDS_0, BOARD_TMDS_1, BOARD_TMDS_2},
+					  BOARD_TMDS_CLK, &pool_video, &pool_packets);
 
 	multicore_launch_core1(thread2);
 
@@ -131,8 +136,8 @@ void CORE0_CODE encode_video_isr() {
 		video_output_submit(obj);
 
 		if((++cnt) == 15 * FRAME_VIS_HEIGHT) {
-				cnt = 0;
-			gpio_xor_mask(1 << BOARD_LED0_PIN);
+			cnt = 0;
+			gpio_xor_mask(1 << BOARD_LED0);
 		}
 	}
 }
@@ -339,8 +344,8 @@ bool CORE1_CODE gpu_sync_video(struct gpu_sync_state* state) {
 	state->current_idx = current_idx;
 
 	str_finish(str_append(
-		str_uint(str_char(str_uint(state->msg, video_width * 2), 'x'),
-				 video_height),
+			str_uint(str_char(str_uint(state->msg, video_width * 2), 'x'),
+					 video_height),
 		"p [" PROJECT_NAME " " PROJECT_VERSION "]"));
 	state->msg_frames_visible = 60 * 10;
 
@@ -368,8 +373,8 @@ void CORE1_CODE thread2() {
 	tmds_encode_setup();
 
 	// TODO: only 32 because of an overflow during following sync scan
-	gpu_input_init(15, FRAME_WIDTH / 2 * 4, 2, &pool_audio, &queue_test_audio,
-				   12, 11);
+	gpu_input_init(15, FRAME_WIDTH / 2 * 4, BOARD_VIDEO_BASE, &pool_audio,
+				   &queue_test_audio, BOARD_AUDIO_BASE, BOARD_AUDIO_WS);
 	gpu_input_start();
 
 	struct gpu_sync_state gpu_sync;
