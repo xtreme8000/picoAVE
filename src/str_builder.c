@@ -1,10 +1,5 @@
 #include "str_builder.h"
 
-char* str_char(char* s, char c) {
-	*(s++) = c;
-	return s;
-}
-
 char* str_append(char* s, char* a) {
 	while(*a)
 		*(s++) = *(a++);
