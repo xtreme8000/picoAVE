@@ -40,7 +40,7 @@ static void* alloc_video() {
 	obj->encode_offset = 0;
 	obj->encode_length = 0;
 	obj->length = FRAME_BUFFER_WIDTH / 2;
-	obj->ptr[0] = malloc(obj->length * sizeof(uint32_t));
+	obj->ptr[0] = tmds_image_00h;
 	obj->ptr[1] = malloc(obj->length * sizeof(uint32_t));
 	obj->ptr[2] = malloc(obj->length * sizeof(uint32_t));
 	return obj;
@@ -128,15 +128,11 @@ void CORE0_CODE encode_video_isr() {
 					= tmds_symbols_10h[bias];
 		}
 
-		bool finished = obj->last_line;
 		video_output_submit(obj);
 
-		if(finished) {
-			cnt++;
-			if(cnt == 15) {
+		if((++cnt) == 15 * FRAME_VIS_HEIGHT) {
 				cnt = 0;
-				gpio_xor_mask(1 << PICO_DEFAULT_LED_PIN);
-			}
+			gpio_xor_mask(1 << BOARD_LED0_PIN);
 		}
 	}
 }
@@ -256,7 +252,6 @@ bool CORE1_CODE gpu_sync_video(struct gpu_sync_state* state) {
 
 	for(size_t k = 0; k < video_objs_length; k++) {
 		video_objs[k] = mem_pool_alloc(&pool_video);
-		memcpy(video_objs[k]->ptr[0], tmds_image_00h, sizeof(tmds_image_00h));
 		memcpy(video_objs[k]->ptr[1], tmds_image_10h, sizeof(tmds_image_10h));
 		memcpy(video_objs[k]->ptr[2], tmds_image_80h, sizeof(tmds_image_80h));
 	}
@@ -352,27 +347,24 @@ bool CORE1_CODE gpu_sync_video(struct gpu_sync_state* state) {
 	return success;
 }
 
-struct tmds_data3 empty_line;
-struct tmds_data3 empty_line_sync;
-struct tmds_data3 empty_line_last;
-
-void CORE1_CODE thread2() {
-	empty_line = empty_line_sync = empty_line_last = (struct tmds_data3) {
+struct tmds_data3 CORE0_DATA empty_line[2] = {
+	{
+		.vsync = false,
 		.type = TYPE_CONST,
 		.encode_length = 0,
 		.length = FRAME_BUFFER_WIDTH / 2,
 		.ptr = {tmds_image_00h, tmds_image_10h, tmds_image_80h},
-	};
+	},
+	{
+		.vsync = true,
+		.type = TYPE_CONST,
+		.encode_length = 0,
+		.length = FRAME_BUFFER_WIDTH / 2,
+		.ptr = {tmds_image_00h, tmds_image_10h, tmds_image_80h},
+	},
+};
 
-	empty_line.vsync = false;
-	empty_line.last_line = false;
-
-	empty_line_sync.vsync = true;
-	empty_line_sync.last_line = false;
-
-	empty_line_last.vsync = false;
-	empty_line_last.last_line = true;
-
+void CORE1_CODE thread2() {
 	tmds_encode_setup();
 
 	// TODO: only 32 because of an overflow during following sync scan
@@ -392,7 +384,6 @@ void CORE1_CODE thread2() {
 		for(size_t k = gpu_sync.video_vstart; k < gpu_sync.video_vend; k++) {
 			struct tmds_data3* obj = mem_pool_alloc(&pool_video);
 			obj->vsync = k == 0;
-			obj->last_line = k == FRAME_VIS_HEIGHT - 1;
 			obj->encode_offset
 				= FRAME_BUFFER_OFFSET / 2 + gpu_sync.video_xstart;
 			obj->encode_length = gpu_sync.video_width_padded;
@@ -457,8 +448,7 @@ void CORE1_CODE thread2() {
 		}
 
 		for(size_t k = gpu_sync.video_vend; k < FRAME_VIS_HEIGHT; k++) {
-			struct tmds_data3* obj
-				= (k == FRAME_VIS_HEIGHT - 1) ? &empty_line_last : &empty_line;
+			struct tmds_data3* obj = empty_line + 0;
 			queue_add_blocking(&queue_test, &obj);
 			multicore_fifo_push_blocking(0);
 
@@ -486,7 +476,7 @@ void CORE1_CODE thread2() {
 		}
 
 		for(size_t k = 0; k < gpu_sync.video_vstart; k++) {
-			struct tmds_data3* obj = (k == 0) ? &empty_line_sync : &empty_line;
+			struct tmds_data3* obj = empty_line + ((k == 0) ? 1 : 0);
 			queue_add_blocking(&queue_test, &obj);
 			multicore_fifo_push_blocking(0);
 

@@ -14,7 +14,6 @@ struct tmds_data3 {
 		TYPE_PACKET,
 	} type;
 	bool vsync;
-	bool last_line;
 	size_t encode_offset;
 	size_t encode_length;
 	size_t length;
