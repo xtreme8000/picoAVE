@@ -70,6 +70,7 @@ static void build_sync_tables(void) {
 	tmds_encode_sync(FRAME_WIDTH, true, tmds_vsync_porch0, tmds_vsync_porch1,
 					 tmds_vsync_porch2);
 
+#ifndef DVI_ONLY
 	struct packet packets[2];
 	packet_avi_info(packets + 0);
 	packet_spd_info(packets + 1, "picoAVE", "picoAVE");
@@ -78,6 +79,7 @@ static void build_sync_tables(void) {
 				   tmds_vsync_pulse0 + FRAME_H_BLANK / 2,
 				   tmds_vsync_pulse1 + FRAME_H_BLANK / 2,
 				   tmds_vsync_pulse2 + FRAME_H_BLANK / 2);
+#endif
 }
 
 static struct tmds_data3* CORE0_CODE build_video_signal(void) {
@@ -265,6 +267,7 @@ static uint32_t audio_cts(uint32_t tmds_clk, uint32_t n, uint32_t samplerate) {
 }
 
 void video_output_set_audio_info(uint32_t samplerate) {
+#ifndef DVI_ONLY
 	// limit samplerate between -5% of 32kHz and +5% of 192kHz
 	uint32_t sr_clamped
 		= clamp_n(samplerate, 32000 * 95 / 100, 192000 * 105 / 100);
@@ -307,4 +310,5 @@ void video_output_set_audio_info(uint32_t samplerate) {
 
 	vdo.audio_info_idx = other_packet;
 	vdo.state.rate_increase = sr_clamped;
+#endif
 }

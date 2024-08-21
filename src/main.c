@@ -85,8 +85,8 @@ int main() {
 
 	for(size_t k = 0; k < FRAME_BUFFER_WIDTH / 2; k++) {
 		tmds_image_00h[k] = 0xffd00;
-		tmds_image_10h[k] = tmds_symbols_10h[4];
-		tmds_image_80h[k] = tmds_symbols_80h[4];
+		tmds_image_10h[k] = 0x7c1f0;
+		tmds_image_80h[k] = tmds_symbols_cbcr[4];
 	}
 
 	tmds_encode_sync_video(tmds_image_00h, tmds_image_10h, tmds_image_80h);
@@ -123,15 +123,10 @@ void CORE0_CODE encode_video_isr() {
 
 	struct tmds_data3* obj;
 	while(queue_try_remove(&queue_test, &obj)) {
-		if(obj->encode_length > 0) {
-			size_t bias = tmds_encode_y1y2(obj->ptr[1] + obj->encode_offset,
-										   obj->encode_length,
-										   obj->ptr[1] + obj->encode_offset);
-
-			if(obj->encode_offset + obj->encode_length < obj->length)
-				obj->ptr[1][obj->encode_offset + obj->encode_length]
-					= tmds_symbols_10h[bias];
-		}
+		if(obj->encode_length > 0)
+			tmds_encode_y1y2(obj->ptr[1] + obj->encode_offset,
+							 obj->encode_length,
+							 obj->ptr[1] + obj->encode_offset);
 
 		video_output_submit(obj);
 
@@ -149,6 +144,7 @@ void CORE0_CODE thread1() {
 		struct audio_data* frame;
 		queue_remove_blocking(&queue_test_audio, &frame);
 
+#ifndef DVI_ONLY
 		for(size_t idx = 0; idx < AUDIO_FRAME_LENGTH; idx += 4) {
 			struct tmds_data3* obj = mem_pool_alloc(&pool_packets);
 
@@ -159,6 +155,7 @@ void CORE0_CODE thread1() {
 
 			video_output_submit(obj);
 		}
+#endif
 
 		uint32_t samplerate = frame->samplerate;
 		mem_pool_free(&pool_audio, frame);
@@ -344,9 +341,14 @@ bool CORE1_CODE gpu_sync_video(struct gpu_sync_state* state) {
 	state->current_idx = current_idx;
 
 	str_finish(str_append(
-			str_uint(str_char(str_uint(state->msg, video_width * 2), 'x'),
-					 video_height),
-		"p [" PROJECT_NAME " " PROJECT_VERSION "]"));
+		str_uint(str_char(str_uint(state->msg, video_width * 2), 'x'),
+				 video_height),
+#ifdef GIT_COMMIT_HASH
+		"p [" PROJECT_NAME " " GIT_COMMIT_HASH "]"
+#else
+		"p [" PROJECT_NAME " " PROJECT_VERSION "]"
+#endif
+		));
 	state->msg_frames_visible = 60 * 10;
 
 	return success;
@@ -434,9 +436,11 @@ void CORE1_CODE thread2() {
 										   gpu_sync.video_width_padded,
 										   obj->ptr[2] + obj->encode_offset);
 
+			// finish bias at 0 for cbcr lane
+			// not required for y1y2, because symbol 0x10 leaves bias unchanged
 			if(obj->encode_offset + gpu_sync.video_width_padded < obj->length)
 				obj->ptr[2][obj->encode_offset + gpu_sync.video_width_padded]
-					= tmds_symbols_80h[bias];
+					= tmds_symbols_cbcr[bias];
 
 			queue_add_blocking(&queue_test, &obj);
 			multicore_fifo_push_blocking(0);

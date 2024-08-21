@@ -51,8 +51,16 @@ pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/serializer.pi
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/capture.pio)
 pico_generate_pio_header(picoave ${CMAKE_CURRENT_LIST_DIR}/src/pio/i2s.pio)
 
+execute_process(
+        COMMAND git log -1 --format=%h
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+        OUTPUT_VARIABLE GIT_COMMIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
 target_compile_definitions(picoave PRIVATE
         PICO_STACK_SIZE=512
+        GIT_COMMIT_HASH="${GIT_COMMIT_HASH}"
 )
 
 target_compile_options(picoave PUBLIC

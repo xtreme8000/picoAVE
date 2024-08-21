@@ -22,38 +22,21 @@ uint32_t tmds_sync_symbols[4] = {
 	0xaaeab,
 };
 
-uint32_t tmds_symbols_10h[9] = {
+uint32_t tmds_symbols_cbcr[9] = {
 	/*
-		bias -8, error 8, (18, 18)
-		bias -6, error 13, (18, 19)
-		bias -4, error 4, (18, 16)
-		bias -2, error 8, (18, 18)
-		bias 0, error 0, (16, 16)
-		bias 2, error 4, (18, 16)
-		bias 4, error 8, (18, 18)
-		bias 6, error 20, (18, 20)
-		bias 8, error 32, (20, 20)
+		bias -8, error 1.2047, (127,127)
+		bias -6, error 2.2162, (122,129)
+		bias -4, error 1.5960, (128,129)
+		bias -2, error 0.0000, (128,128)
+		bias 0, error 0.7835, (126,128)
+		bias 2, error 0.8130, (128,127)
+		bias 4, error 1.5965, (126,127)
+		bias 6, error 2.2162, (122,129)
+		bias 8, error 1.7652, (124,129)
 		bias is 0 afterwards
 	*/
-	0xfc7f1, 0x7c7f1, 0x7c3f1, 0x43bf1, 0x7c1f0,
-	0x7c10e, 0x4390e, 0x4310e, 0x4310c,
-};
-
-uint32_t tmds_symbols_80h[9] = {
-	/*
-		bias -8, error 2, (127, 127)
-		bias -6, error 4, (128, 130)
-		bias -4, error 1, (128, 129)
-		bias -2, error 0, (128, 128)
-		bias 0, error 1, (129, 128)
-		bias 2, error 1, (128, 127)
-		bias 4, error 5, (126, 127)
-		bias 6, error 5, (129, 130)
-		bias 8, error 2, (129, 129)
-		bias is 0 afterwards
-	*/
-	0x1fc7f, 0xe077f, 0xe037f, 0x6037f, 0x6017f,
-	0x1fd80, 0x1fc80, 0xe0780, 0xe0380,
+	0x1fc7f, 0x5fc7c, 0xe037f, 0x6037f, 0x6027f,
+	0x1fd80, 0x1fc80, 0xe0283, 0xe0281,
 };
 
 uint32_t tmds_sync_lookup(bool vsync, bool hsync) {
@@ -196,6 +179,7 @@ void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2) {
 		}
 	}*/
 
+#ifndef DVI_ONLY
 	for(size_t k = 0; k < VIDEO_DATA_PREAMBLE_LENGTH / 2; k++) {
 		tmds0[k] = tmds_sync_lookup(true, true);
 		tmds1[k] = tmds_sync_symbols[1]; // CTL0 = 1, CTL1 = 0
@@ -205,6 +189,13 @@ void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2) {
 	tmds0[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_0;
 	tmds1[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_1;
 	tmds2[VIDEO_DATA_PREAMBLE_LENGTH / 2] = VIDEO_DATA_GUARD_BAND_2;
+#else
+	for(size_t k = 0; k <= VIDEO_DATA_PREAMBLE_LENGTH / 2; k++) {
+		tmds0[k] = tmds_sync_lookup(true, true);
+		tmds1[k] = tmds_sync_symbols[0]; // CTL0 = 0, CTL1 = 0
+		tmds2[k] = tmds_sync_symbols[0]; // CTL2 = 0, CTL3 = 0
+	}
+#endif
 }
 
 uint32_t tmds_encode_y1y2(const uint32_t* pixbuf, size_t length,

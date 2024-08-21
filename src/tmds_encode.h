@@ -14,8 +14,7 @@
 
 extern uint16_t tmds_terc4_symbols[16];
 extern uint32_t tmds_sync_symbols[4];
-extern uint32_t tmds_symbols_10h[9];
-extern uint32_t tmds_symbols_80h[9];
+extern uint32_t tmds_symbols_cbcr[9];
 
 void tmds_encode_init(void);
 void tmds_encode_setup(void);
