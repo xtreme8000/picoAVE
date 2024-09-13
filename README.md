@@ -4,6 +4,10 @@ A hardware/software HDMI mod designed for the Nintendo Wii based on the rp2040 m
 
 The CPU runs a parallel video processing pipeline across both cores to achieve full 720x480p 60Hz throughput without any color/information loss or other compromises. There is vsync by design, so tearing is impossible. A separate background task sends out audio packets in spare time.
 
+> [!WARNING]
+> Currently the only supported mode is "EDTV / HDTV (480p)" as found in Wii settings.
+> Any other mode results in no signal output!
+
 ### Building (software)
 
 This is the same as any other pico project. You should probably edit the pico sdk path, too. It is absolutely crucial to build in release mode.
