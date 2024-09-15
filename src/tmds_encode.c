@@ -219,7 +219,7 @@ void tmds_encode_sync_video(uint32_t* tmds0, uint32_t* tmds1, uint32_t* tmds2) {
 
 uint32_t tmds_encode_y1y2(const uint32_t* pixbuf, size_t length,
 						  uint32_t* tmds) {
-	uint32_t bias = 0;
+	uint32_t bias = 4 << 10; // (0 + 8) / 2
 
 	asm volatile("loop%=:\n\t"
 				 "ldmia      %[pixbuf]!,{%%r4,%%r5,%%r6}\n\t"
@@ -270,7 +270,7 @@ uint32_t tmds_encode_y1y2(const uint32_t* pixbuf, size_t length,
 // slower than y1y2
 uint32_t tmds_encode_cbcr(const uint32_t* pixbuf, size_t length,
 						  uint32_t* tmds) {
-	uint32_t bias = 0;
+	uint32_t bias = 4 << 10; // (0 + 8) / 2
 
 	asm volatile("loop%=:\n\t"
 				 "ldmia      %[pixbuf]!,{%%r4,%%r5,%%r6}\n\t"
