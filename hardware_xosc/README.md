@@ -1,0 +1,1 @@
+This overrides the pico-sdk's own hardware_xosc to prevent a [compile error](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_xosc/xosc.c#L19) on any clock input frequency higher than 50MHz (we need 54MHz).
