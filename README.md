@@ -32,5 +32,8 @@ Best done with a Raspberry Pi or another Pico you have available. TODO
 ![Wii menu frame](docs/images/frame.png)
 > Example raw frame captured from the Wii home menu with a cheap HDMI capture card. There is a small overlay with information about the current input signal, which disappears after a few seconds. Note, that the native aspect ratio is not 16:9.
 
+![picoAVE rev01](docs/images/finished_install.webp)
+> The first hardware revision, designed to solder directly onto a prototype flex pcb. The main pcb contains a rp2040, voltage level shifter, flash memory and LDO regulator. There is a second pcb for the HDMI mini output, connected by a 16 pin FFC. Wires are needed for GND, 5V, 1.8V and CLK connections. Firmware is flashed over a SWD header on the bottom left.
+
 ![Original prototype](docs/images/prototype.webp)
 > The original prototype, still based on an actual pico board. Because the CPU clock ran unsynchronized to the video input, the HDMI signal dropped every few seconds (pipeline ran out of data). There are two TXS0108E voltage shifters to adapt the 1.8V signal levels of the GPU to 3.3V of a pico. Below is a custom flex pcb soldered directly to the board's vias. The Wii2HDMI is only used to force the Wii into 480p output mode.
