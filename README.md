@@ -6,6 +6,9 @@ The CPU runs a parallel video processing pipeline across both cores to achieve f
 
 > **[Look here](docs/impl_details.md) for in-depth implementation details.**
 
+> [!NOTE]
+> In theory this mod should also work on a Gamecube, however I have not tested it.
+
 > [!WARNING]
 > Currently the only supported mode is "EDTV / HDTV (480p)" as found in Wii settings.
 > Any other mode results in no signal output!
