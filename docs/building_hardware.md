@@ -49,6 +49,7 @@ For the bridge flex pcb, select:
 5. Place and align the bridge pcb onto the solder balls. For alignment, reference [this page from gcvideo](https://github.com/ikorb/gcvideo/blob/main/HDL/gcvideo_dvi/README-Wii.md#digital-audio-and-video), which covers Wii board revisions 40, 50 and 60, or in general [consolemods](https://consolemods.org/wiki/Wii:Wii_AVE_HDMI) or [wiibrew](https://wiibrew.org/wiki/Hardware/AV_Encoder#Chip_Pinout).
 6. Apply a bit of flux on top of the flex pcb. Then move your iron with solder over all holes evenly until the pcb is firmly pulled towards the Wii mainboard. There must not be a gap between both pcbs. Again, make sure there are no bridges.
 7. For each signal, check for continuity between the picoAVE mainboard and corresponding pins on the AVE-RVL chip to ensure good contact, the [wiibrew](https://wiibrew.org/wiki/Hardware/AV_Encoder#Chip_Pinout) page covers the pinout.
+8. To enable 480p video selection in the menu, you need to short pins 8 and 10 on the Wii analog video output port, see [here](https://bitbuilt.net/images/guide_hub/console_modding/wii/ss_definitive_wii/av_port.png).
 
 ## Flashing firmware
 
