@@ -38,16 +38,21 @@ For the bridge flex pcb, select:
 ## Assembly steps
 
 #### Mainboard + Bridge pcb
-1. Solder the bridge pcb onto the back of the picoAVE mainboard.
+
+> [!NOTE]
+> For installation you can mostly follow [this video](https://www.youtube.com/watch?v=v44PfH3R4iA) made for another Wii hdmi mod.
+
+1. Solder the bridge pcb onto the back of the picoAVE mainboard. If you have an old revision Wii and rev01 of the mod, please cut off a bit of the corner of the flex pcb that covers the 54MHz clock pad below.
 2. Remove the solder mask from necessary vias on the Wii mainboard. A tiny flat head screw driver can be used to just scrape it off and works well. **Be gentle and use almost no pressue!** Make sure to remove accumulated dust.
 3. Apply flux to the now exposed vias.
 4. Apply solder to the tip of your iron and attach a small ball of solder onto each via. Make sure there are no shorts/bridges. If it won't stick, try scraping more.
-5. Place and align the bridge pcb onto the solder balls. Then apply solder over all holes evenly until the pcb is firmly pulled towards the Wii mainboard. There must not be a gap between both pcbs. Again, make sure there are no bridges.
-6. For each signal, check for continuity between the picoAVE mainboard and corresponding pins on the AVE-RVL chip to ensure good contact.
+5. Place and align the bridge pcb onto the solder balls. For alignment, reference [this page from gcvideo](https://github.com/ikorb/gcvideo/blob/main/HDL/gcvideo_dvi/README-Wii.md#digital-audio-and-video), which covers Wii board revisions 40, 50 and 60, or in general [consolemods](https://consolemods.org/wiki/Wii:Wii_AVE_HDMI) or [wiibrew](https://wiibrew.org/wiki/Hardware/AV_Encoder#Chip_Pinout).
+6. Apply a bit of flux on top of the flex pcb. Then move your iron with solder over all holes evenly until the pcb is firmly pulled towards the Wii mainboard. There must not be a gap between both pcbs. Again, make sure there are no bridges.
+7. For each signal, check for continuity between the picoAVE mainboard and corresponding pins on the AVE-RVL chip to ensure good contact, the [wiibrew](https://wiibrew.org/wiki/Hardware/AV_Encoder#Chip_Pinout) page covers the pinout.
 
 ## Flashing firmware
 
-Best done with a Raspberry Pi or another Pico you have available.
+Best done with a Raspberry Pi or another Pico you have available. Flasing over USB is not possible since the rp2040 clock is not the default 12MHz.
 
 With a Raspberry Pi you can use [OpenOCD](https://openocd.org/) to flash the main board over SWD using two GPIO pins, e.g. 23 and 24. The following config should be saved as `openocd.cfg`.
 
